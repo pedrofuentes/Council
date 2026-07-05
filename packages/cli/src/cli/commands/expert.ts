@@ -820,14 +820,19 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
             throw new CliUserError(msg);
           }
           // DB row is the source of truth for "is this document active?".
-          // Mark it removed FIRST: if indexer.remove() then fails, the row's
-          // 'removed' status causes the next training run to treat the file
-          // as new and re-index it (replace-by-path semantics in the
-          // indexer), which heals any stale FTS5 entry. Doing it in the
-          // opposite order would leave the index empty while the DB still
-          // reports the file as active — a state the processor cannot
-          // recover from without manual intervention.
+          // Mark it removed FIRST so a mid-operation failure never leaves an
+          // indexed-but-untracked file. The removal is then made durable by
+          // recording the filename in the expert definition's `excludedDocs`
+          // (below): unlike the `expert_documents` "removed" status — which
+          // `expert train --retrain` overwrites for every row — `excludedDocs`
+          // is read by the training pipeline, so the still-on-disk file is
+          // skipped and NOT resurrected on a later retrain.
           await documentRepo.markRemoved(match.id);
+          const alreadyExcluded = expert.excludedDocs ?? [];
+          const nextExcluded = alreadyExcluded.includes(match.filename)
+            ? alreadyExcluded
+            : [...alreadyExcluded, match.filename];
+          await library.update(slug, { excludedDocs: nextExcluded });
           let ftsCleanupFailed = false;
           try {
             await indexer.remove(match.filePath);
@@ -836,17 +841,18 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
             const detail = err instanceof Error ? err.message : String(err);
             writeError(
               `Warning: index entry for "${target}" could not be removed (${detail}). ` +
-                `It will be replaced on the next training run.\n`,
+                `Re-run "council expert train ${slug} --retrain" to repair the index.\n`,
             );
           }
           // #382: do NOT report ✓ when the FTS5 cleanup failed. The row is
-          // marked removed in tracking (the source of truth), but the
-          // user must know the index is in a partial state and a future
-          // training run is required to heal it.
+          // marked removed in tracking (the source of truth) and the file is
+          // excluded from future training, but the user must know the index is
+          // in a partial state. A `--retrain` clears all of the expert's FTS
+          // entries (clearForRetrain), so it repairs the stale entry.
           if (ftsCleanupFailed) {
             write(
               `⚠ "${target}" removed from tracking but FTS index cleanup failed. ` +
-                `Re-run "council expert train ${slug}" to repair the index.\n`,
+                `Re-run "council expert train ${slug} --retrain" to repair the index.\n`,
             );
           } else {
             write(`✓ "${target}" removed from index. Profile will be updated on next use.\n`);
@@ -1352,6 +1358,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
         // staging dir is always removed.
         const fileInputs = opts.file ?? [];
         const urlInputs = opts.url ?? [];
+        const committedFilenames: string[] = [];
         if (fileInputs.length > 0 || urlInputs.length > 0) {
           const stagingPath = await fs.mkdtemp(path.join(expertDir, ".train-staging-"));
           try {
@@ -1368,6 +1375,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             // atomic — a mid-loop copy failure rolls back already-copied
             // files (#1084) — so docs/ never ends up in a partial state.
             await commitStagedDocs(stagingPath, docsPath, staged);
+            committedFilenames.push(...staged);
           } catch (err) {
             if (err instanceof CliUserError) {
               writeError(err.message + "\n");
@@ -1376,6 +1384,17 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           } finally {
             await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => undefined);
           }
+        }
+
+        // Explicitly re-adding a file via `--file`/`--url` clears any prior
+        // exclusion recorded by `expert docs --remove`, so removal is not a
+        // permanent blacklist. Compute the effective exclusion set for this
+        // run and persist the pruned set when a re-add cleared an entry.
+        const priorExcluded = expert.excludedDocs ?? [];
+        const reAdded = new Set(committedFilenames);
+        const excludedDocs = priorExcluded.filter((f) => !reAdded.has(f));
+        if (excludedDocs.length !== priorExcluded.length) {
+          await library.update(slug, { excludedDocs });
         }
 
         const documentRepo = new DocumentRepository(db);
@@ -1435,6 +1454,7 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           documentRepo,
           profileRepo,
           indexer,
+          excludedDocs,
           config: {
             supportedFormats: config.expert.supportedFormats,
             recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
