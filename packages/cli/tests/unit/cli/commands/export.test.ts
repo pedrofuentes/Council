@@ -25,6 +25,7 @@ import { DebateRepository } from "../../../../src/memory/repositories/debates.js
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
+import { seedTwoSameSecondSessions } from "../../../helpers/same-second-sessions.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 // Wrap fs.rename, fs.open and fs.rm so individual tests can force the atomic
@@ -713,77 +714,6 @@ async function seedPanelWithIncompleteDebate(testHome: string): Promise<{ panelN
     });
     await new DebateRepository(db).update(debate.id, { status: "interrupted" });
     return { panelName: panel.name };
-  } finally {
-    await db.destroy();
-  }
-}
-
-/**
- * T-14 (F-08): seed two sessions that share one timestamped resume/export
- * name (as two `convene` runs in the same second would) but keep distinct
- * ULIDs and distinct transcript content. A 5ms gap gives the second session a
- * strictly-later `created_at` so `findByName` (the shared-handle path) picks it
- * deterministically as the "latest".
- */
-async function seedTwoSameSecondSessions(testHome: string): Promise<{
-  readonly sharedName: string;
-  readonly first: { readonly id: string; readonly marker: string };
-  readonly second: { readonly id: string; readonly marker: string };
-}> {
-  const db = await createDatabase(path.join(testHome, "council.db"));
-  try {
-    const panelRepo = new PanelRepository(db);
-    const expertRepo = new ExpertRepository(db);
-    const debateRepo = new DebateRepository(db);
-    const turnRepo = new TurnRepository(db);
-
-    const sharedName = "same-second-2026-06-16T23:47:21";
-
-    async function seedOne(marker: string): Promise<string> {
-      const panel = await panelRepo.create({
-        name: sharedName,
-        topic: `Topic ${marker}`,
-        copilotHome: path.join(testHome, "copilot"),
-        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
-      });
-      const cto = await expertRepo.create({
-        panelId: panel.id,
-        slug: "cto",
-        displayName: "CTO",
-        model: "claude-sonnet-4",
-        systemMessage: "You are a CTO.",
-      });
-      const debate = await debateRepo.create({
-        panelId: panel.id,
-        prompt: `Prompt ${marker}`,
-        moderator: "round-robin",
-      });
-      await turnRepo.create({
-        debateId: debate.id,
-        round: 0,
-        seq: 0,
-        speakerKind: "expert",
-        expertId: cto.id,
-        content: marker,
-      });
-      await debateRepo.update(debate.id, {
-        status: "completed",
-        endedAt: new Date().toISOString(),
-      });
-      return panel.id;
-    }
-
-    const firstMarker = "FIRST-SESSION-UNIQUE-CONTENT-alpha";
-    const firstId = await seedOne(firstMarker);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    const secondMarker = "SECOND-SESSION-UNIQUE-CONTENT-beta";
-    const secondId = await seedOne(secondMarker);
-
-    return {
-      sharedName,
-      first: { id: firstId, marker: firstMarker },
-      second: { id: secondId, marker: secondMarker },
-    };
   } finally {
     await db.destroy();
   }
