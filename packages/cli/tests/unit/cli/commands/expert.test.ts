@@ -22,6 +22,7 @@ import {
 } from "../../../../src/cli/commands/expert.js";
 import { CliUserError } from "../../../../src/cli/cli-user-error.js";
 import type { ExpertDefinition } from "../../../../src/core/expert.js";
+import type { DocumentStatus } from "../../../../src/memory/repositories/document-repository.js";
 import type {
   CouncilEngine,
   EngineEvent,
@@ -1260,7 +1261,12 @@ fs.writeFileSync(p, body, 'utf-8');`,
       personaDescription: "VP of Engineering",
     };
 
-    async function seedDocRow(slug: string, filename: string, wordCount: number): Promise<void> {
+    async function seedDocRow(
+      slug: string,
+      filename: string,
+      wordCount: number,
+      status: DocumentStatus = "processed",
+    ): Promise<void> {
       const { createDatabase } = await import("../../../../src/memory/db.js");
       const { DocumentRepository } =
         await import("../../../../src/memory/repositories/document-repository.js");
@@ -1279,7 +1285,11 @@ fs.writeFileSync(p, body, 'utf-8');`,
           sizeBytes: 100,
           wordCount,
         });
-        await repo.updateStatus(created.id, "processed", new Date().toISOString());
+        await repo.updateStatus(
+          created.id,
+          status,
+          status === "processed" ? new Date().toISOString() : undefined,
+        );
         const indexer = createDocumentIndexer(db);
         await indexer.index({
           content: `content of ${filename}`,
@@ -1477,6 +1487,155 @@ fs.writeFileSync(p, body, 'utf-8');`,
       } finally {
         await db.destroy();
       }
+    });
+
+    it("--remove rollback restores the document's ORIGINAL status, not 'processed' (#2464)", async () => {
+      await seedExpert(env, PERSONA);
+      // Prior status is "failed" — the rollback must restore THIS, not the
+      // previously hardcoded "processed".
+      await seedDocRow("boss", "alpha.md", 100, "failed");
+
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const updateSpy = vi
+        .spyOn(FileExpertLibrary.prototype, "update")
+        .mockRejectedValue(new Error("disk full"));
+      const updateStatusSpy = vi.spyOn(DocumentRepository.prototype, "updateStatus");
+
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"]),
+        ).rejects.toThrow(/excludedDocs/i);
+
+        // The rollback must pass the captured original status, never "processed".
+        expect(updateStatusSpy).toHaveBeenCalledWith(expect.any(String), "failed");
+        expect(updateStatusSpy).not.toHaveBeenCalledWith(expect.any(String), "processed");
+      } finally {
+        updateSpy.mockRestore();
+        updateStatusSpy.mockRestore();
+      }
+
+      // End-to-end: the DB row is back at its original "failed" status.
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        const rows = await new DocumentRepository(db).findByExpert("boss");
+        expect(rows[0]?.status).toBe("failed");
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--remove surfaces BOTH the original and the rollback error when rollback also fails (#2464)", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100, "processed");
+
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const updateSpy = vi
+        .spyOn(FileExpertLibrary.prototype, "update")
+        .mockRejectedValue(new Error("ORIGINAL_UPDATE_FAILURE"));
+      const rollbackSpy = vi
+        .spyOn(DocumentRepository.prototype, "updateStatus")
+        .mockRejectedValue(new Error("ROLLBACK_FAILURE"));
+
+      let erred = "";
+      let thrown: unknown;
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+        );
+        thrown = await cmd
+          .parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"])
+          .then(
+            () => undefined,
+            (e: unknown) => e,
+          );
+      } finally {
+        updateSpy.mockRestore();
+        rollbackSpy.mockRestore();
+      }
+
+      // A bare rollback throw would mask the root cause; the surfaced error
+      // must still expose the ORIGINAL update failure.
+      expect(thrown).toBeInstanceOf(CliUserError);
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toContain("ORIGINAL_UPDATE_FAILURE");
+      expect(message).toContain("ROLLBACK_FAILURE");
+      expect(erred).toContain("ORIGINAL_UPDATE_FAILURE");
+    });
+
+    it("--remove sanitizes control/ANSI/OSC sequences in the not-found error (#2464)", async () => {
+      await seedExpert(env, PERSONA);
+      // No matching doc → hits the not-found branch, which echoes `target`.
+      const malicious = "ghost\x1B[31m\x1B]0;pwn\x07\r\n.md";
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", malicious]),
+      ).rejects.toThrow(/not found/i);
+
+      // Raw escape/control bytes must never reach the terminal error stream.
+      expect(erred).not.toContain("\x1B");
+      expect(erred).not.toContain("\x07");
+      expect(erred).not.toContain("\r");
+    });
+
+    it("--remove sanitizes control/ANSI/OSC sequences in the excludedDocs-update failure (#2464)", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100, "processed");
+
+      const malicious = "boom\x1B[31m\x1B]0;pwn\x07\r\ninjected";
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const updateSpy = vi
+        .spyOn(FileExpertLibrary.prototype, "update")
+        .mockRejectedValue(new Error(malicious));
+
+      let erred = "";
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+        );
+        await expect(
+          cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"]),
+        ).rejects.toThrow(/excludedDocs/i);
+      } finally {
+        updateSpy.mockRestore();
+      }
+
+      // The untrusted error `detail` must be neutralized before display.
+      expect(erred).not.toContain("\x1B");
+      expect(erred).not.toContain("\x07");
+      expect(erred).not.toContain("\r");
     });
   });
 
@@ -2339,6 +2498,56 @@ fs.writeFileSync(p, body, 'utf-8');`,
       } finally {
         vi.unstubAllGlobals();
       }
+    });
+
+    it("re-add via --url recovery hint mentions --url, not --file, when excludedDocs update fails (#2464)", async () => {
+      // Seed an expert that already excludes report.md, as if a prior
+      // `docs --remove report.md` had recorded it.
+      await seedExpert(env, { ...PERSONA, excludedDocs: ["report.md"] });
+
+      const fakeFetch = vi.fn(
+        async () =>
+          new Response("Refreshed report.", {
+            status: 200,
+            headers: { "content-type": "text/markdown" },
+          }),
+      );
+      vi.stubGlobal("fetch", fakeFetch);
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const updateSpy = vi
+        .spyOn(FileExpertLibrary.prototype, "update")
+        .mockRejectedValue(new Error("disk full"));
+
+      let erred = "";
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--url",
+            "https://example.com/reports/report.md",
+          ]),
+        ).rejects.toThrow(/excludedDocs/i);
+      } finally {
+        updateSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+
+      // The doc was re-added via --url, so the recovery hint must reference
+      // --url — re-running with --file would be wrong for a URL source.
+      expect(erred).toContain("--url");
+      expect(erred).not.toMatch(/--file\b/);
     });
 
     it("does not orphan a --file when a later --url input fails (atomic ingestion, F14)", async () => {
