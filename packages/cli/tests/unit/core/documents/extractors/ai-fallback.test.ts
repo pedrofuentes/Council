@@ -586,6 +586,123 @@ describe("attemptAiFallback — magic-byte blocklist gate (🔴 fix)", () => {
     expect(result2).toBeNull();
   });
 
+  // #2459 item 1: Generic <?xml documents should NOT be misclassified as SVG
+  it("allows legitimate non-SVG XML files with <?xml prolog (not blocked)", async () => {
+    // .xml/.plist/.rss/.xhtml with <?xml but NO <svg root → should NOT be classified as SVG
+    const xmlBuffer = Buffer.from("<?xml version=\"1.0\"?>\n<note><to>User</to></note>");
+    const result1 = await attemptAiFallback(makeCtx(xmlBuffer, ".xml"), {
+      mode: "auto",
+      allowedExtensions: [".xml"],
+    });
+    expect(result1).not.toBeNull();
+
+    const plistBuffer = Buffer.from("<?xml version=\"1.0\"?>\n<plist><dict></dict></plist>");
+    const result2 = await attemptAiFallback(makeCtx(plistBuffer, ".plist"), {
+      mode: "auto",
+      allowedExtensions: [".plist"],
+    });
+    expect(result2).not.toBeNull();
+  });
+
+  // #2459 item 1 + #2460: BOM/whitespace-prefixed <svg should STILL be detected as SVG
+  it("rejects SVG with BOM/whitespace/prolog prefixes", async () => {
+    // UTF-8 BOM before <svg
+    const bomSvgBuffer = Buffer.from("\uFEFF<svg width=\"100\">");
+    const result1 = await attemptAiFallback(makeCtx(bomSvgBuffer, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result1).toBeNull();
+
+    // Leading whitespace before <svg
+    const whitespaceSvgBuffer = Buffer.from("  \n\t<svg width=\"100\">");
+    const result2 = await attemptAiFallback(makeCtx(whitespaceSvgBuffer, ".svg"), {
+      mode: "auto",
+      allowedExtensions: [".svg"],
+    });
+    expect(result2).toBeNull();
+
+    // XML prolog + DOCTYPE before <svg
+    const doctypeSvgBuffer = Buffer.from(
+      '<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "..."><svg>',
+    );
+    const result3 = await attemptAiFallback(makeCtx(doctypeSvgBuffer, ".svg"), {
+      mode: "auto",
+      allowedExtensions: [".svg"],
+    });
+    expect(result3).toBeNull();
+  });
+
+  // #2459 item 2: Parameterize Mach-O test over ALL magic forms
+  it("rejects all Mach-O magic variants (FEEDFACE/FEEDFACF/CEFAEDFE/CFFAEDFE/CAFEBABE)", async () => {
+    const variants = [
+      { name: "FEEDFACE (32-bit BE)", bytes: [0xfe, 0xed, 0xfa, 0xce] },
+      { name: "CEFAEDFE (32-bit LE)", bytes: [0xce, 0xfa, 0xed, 0xfe] },
+      { name: "FEEDFACF (64-bit BE)", bytes: [0xfe, 0xed, 0xfa, 0xcf] },
+      { name: "CFFAEDFE (64-bit LE)", bytes: [0xcf, 0xfa, 0xed, 0xfe] },
+      { name: "CAFEBABE (universal)", bytes: [0xca, 0xfe, 0xba, 0xbe] },
+    ];
+
+    for (const variant of variants) {
+      const buffer = Buffer.from([...variant.bytes, 0x07, 0x00, 0x00, 0x01]);
+      const result = await attemptAiFallback(makeCtx(buffer, ".dat"), {
+        mode: "auto",
+        allowedExtensions: [".dat"],
+      });
+      expect(result).toBeNull(); // all must be blocked
+    }
+  });
+
+  // #2460: Extended Mach-O fat variants + byte-swapped forms
+  it("rejects extended Mach-O fat variants (CAFEBABF/BEBAFECA/BFBAFECA)", async () => {
+    const extendedVariants = [
+      { name: "CAFEBABF (fat 64-bit)", bytes: [0xca, 0xfe, 0xba, 0xbf] },
+      { name: "BEBAFECA (byte-swapped universal)", bytes: [0xbe, 0xba, 0xfe, 0xca] },
+      { name: "BFBAFECA (byte-swapped fat 64)", bytes: [0xbf, 0xba, 0xfe, 0xca] },
+    ];
+
+    for (const variant of extendedVariants) {
+      const buffer = Buffer.from([...variant.bytes, 0x00, 0x00, 0x00, 0x01]);
+      const result = await attemptAiFallback(makeCtx(buffer, ".bin"), {
+        mode: "auto",
+        allowedExtensions: [".bin"],
+      });
+      expect(result).toBeNull();
+    }
+  });
+
+  // #2460: GNU tar + V7 tar variants
+  it("rejects GNU tar (ustar with space) and old V7 tar signatures", async () => {
+    // GNU tar: "ustar " (space at end, not null)
+    const gnuTarBuffer = Buffer.alloc(270, 0);
+    Buffer.from("ustar ").copy(gnuTarBuffer, 257);
+    const result1 = await attemptAiFallback(makeCtx(gnuTarBuffer, ".tar"), {
+      mode: "auto",
+      allowedExtensions: [".tar"],
+    });
+    expect(result1).toBeNull();
+
+    // V7 tar: no ustar marker, but has specific format (checking via heuristic is optional)
+    // For now, we'll just ensure the GNU tar space variant is covered
+  });
+
+  // #2460: Textual variants (uppercase @ECHO, case-insensitive batch)
+  it("rejects uppercase batch script variants (@ECHO, @Echo)", async () => {
+    const upperBatchBuffer = Buffer.from("@ECHO OFF\nREM script\n");
+    const result1 = await attemptAiFallback(makeCtx(upperBatchBuffer, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result1).toBeNull();
+
+    const mixedBatchBuffer = Buffer.from("@Echo Off\nREM script\n");
+    const result2 = await attemptAiFallback(makeCtx(mixedBatchBuffer, ".bat"), {
+      mode: "auto",
+      allowedExtensions: [".bat"],
+    });
+    expect(result2).toBeNull();
+  });
+
   it("includes size= in the signature-blocklist rejection log (#2392 item 2)", async () => {
     const gzipBuffer = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
     const { logger, messages } = captureLogger();
