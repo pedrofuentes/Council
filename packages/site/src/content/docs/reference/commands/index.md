@@ -5,7 +5,7 @@ description: "Every Council CLI command, generated from the CLI's own Commander 
 
 > DO NOT EDIT — this file is auto-generated from the Council CLI's Commander definitions by `pnpm --filter @council-ai/site docs:generate:commands`. Run that command to regenerate it, and `pnpm --filter @council-ai/site docs:check:commands` to verify it is in sync.
 
-Persistent AI expert panels for deliberation and decision-making
+Persistent AI expert panels for deliberation and decision-making Running 'council' with no command launches the interactive TUI by default (on TTY). Use 'council ui' to launch explicitly, or '--no-tui' / COUNCIL\_NO\_TUI to opt out.
 
 ## Commands
 

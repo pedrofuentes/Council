@@ -7,7 +7,7 @@
       "council"
     ],
     "commandPath": "council",
-    "description": "Persistent AI expert panels for deliberation and decision-making",
+    "description": "Persistent AI expert panels for deliberation and decision-making\n\nRunning 'council' with no command launches the interactive TUI by default (on TTY). Use 'council ui' to launch explicitly, or '--no-tui' / COUNCIL_NO_TUI to opt out.",
     "aliases": [],
     "usage": "[options] [command]",
     "arguments": [],
@@ -582,13 +582,12 @@
           },
           {
             "flags": "--max-rounds <n>",
-            "description": "Max rounds (freeform mode only)",
+            "description": "Max rounds for freeform mode. Defaults to the panel template's declared maxRounds, else config.defaults.maxRounds.",
             "long": "--max-rounds",
             "required": true,
             "optional": false,
             "variadic": false,
-            "negate": false,
-            "defaultValue": 4
+            "negate": false
           },
           {
             "flags": "--mode <kind>",

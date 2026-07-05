@@ -289,7 +289,11 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   const program = new Command();
   program
     .name("council")
-    .description("Persistent AI expert panels for deliberation and decision-making")
+    .description(
+      "Persistent AI expert panels for deliberation and decision-making\n\n" +
+        "Running 'council' with no command launches the interactive TUI by default (on TTY). " +
+        "Use 'council ui' to launch explicitly, or '--no-tui' / COUNCIL_NO_TUI to opt out.",
+    )
     .version(packageJson.version)
     .option("-q, --quiet", "Suppress informational stderr output and cost indicators")
     .option("--no-tui", "Skip the interactive terminal UI and use the classic CLI")
