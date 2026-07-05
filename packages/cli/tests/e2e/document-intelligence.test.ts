@@ -379,6 +379,87 @@ describe.sequential("document intelligence e2e", () => {
     expect(ftsPaths).toHaveLength(1);
   });
 
+  it("expert docs --remove persists across train --retrain", async () => {
+    await createPersonaExpert();
+    await writeExpertDoc(ctx, "boss", "keep.md", "Keeper memo about roadmap planning.");
+    await writeExpertDoc(ctx, "boss", "remove-me.md", "Removable memo about a legacy system.");
+
+    // Initial train indexes both documents.
+    await runExpertCommand(["train", "boss", "--engine", "mock"], {
+      engineFactory: () => new StubEngine([buildProfileJson("Terse.", "Empirical.")]),
+    });
+
+    const activeAfterTrain = (await readExpertDocuments(ctx, "boss"))
+      .filter((d) => d.status !== "removed")
+      .map((d) => d.filename)
+      .sort();
+    expect(activeAfterTrain).toEqual(["keep.md", "remove-me.md"]);
+
+    // Un-index one document via `expert docs --remove` (the file stays on disk).
+    const removed = await runExpertCommand(["docs", "boss", "--remove", "remove-me.md"]);
+    expect(removed.stdout).toContain("removed from index");
+
+    const activeAfterRemove = (await readExpertDocuments(ctx, "boss"))
+      .filter((d) => d.status !== "removed")
+      .map((d) => d.filename);
+    expect(activeAfterRemove).toEqual(["keep.md"]);
+
+    // Retrain — the removed file (still on disk) must NOT be resurrected.
+    const retrained = await runExpertCommand(["train", "boss", "--retrain", "--engine", "mock"], {
+      engineFactory: () => new StubEngine([buildProfileJson("Rebuilt.", "Re-anchored.")]),
+    });
+    expect(retrained.stdout).not.toContain("remove-me.md");
+
+    const activeAfterRetrain = (await readExpertDocuments(ctx, "boss"))
+      .filter((d) => d.status !== "removed")
+      .map((d) => d.filename);
+    expect(activeAfterRetrain).toEqual(["keep.md"]);
+    expect(activeAfterRetrain).not.toContain("remove-me.md");
+
+    // The removed document must not reappear in the FTS index either.
+    const ftsPaths = await readFtsFilePaths(ctx, "expert", "boss");
+    expect(ftsPaths.some((p) => p.includes("remove-me.md"))).toBe(false);
+    expect(ftsPaths.some((p) => p.includes("keep.md"))).toBe(true);
+  });
+
+  it("expert train --file re-adds a previously removed document", async () => {
+    await createPersonaExpert();
+    await writeExpertDoc(ctx, "boss", "keep.md", "Keeper memo about roadmap planning.");
+    await writeExpertDoc(ctx, "boss", "readd.md", "Re-addable memo about a project.");
+
+    await runExpertCommand(["train", "boss", "--engine", "mock"], {
+      engineFactory: () => new StubEngine([buildProfileJson("Terse.", "Empirical.")]),
+    });
+
+    await runExpertCommand(["docs", "boss", "--remove", "readd.md"]);
+    expect(
+      (await readExpertDocuments(ctx, "boss"))
+        .filter((d) => d.status !== "removed")
+        .map((d) => d.filename),
+    ).toEqual(["keep.md"]);
+
+    // Explicitly re-add the same filename via `--file`: exclusion is not a
+    // permanent blacklist against an explicit re-add.
+    const source = path.join(ctx.testHome, "reimport");
+    await fs.mkdir(source, { recursive: true });
+    await fs.writeFile(
+      path.join(source, "readd.md"),
+      "Re-added content about the project.",
+      "utf-8",
+    );
+
+    await runExpertCommand(
+      ["train", "boss", "--file", path.join(source, "readd.md"), "--engine", "mock"],
+      { engineFactory: () => new StubEngine([buildProfileJson("Refreshed.", "Updated.")]) },
+    );
+
+    const activeAfterReadd = (await readExpertDocuments(ctx, "boss"))
+      .filter((d) => d.status !== "removed")
+      .map((d) => d.filename)
+      .sort();
+    expect(activeAfterReadd).toEqual(["keep.md", "readd.md"]);
+  });
+
   it("panel docs link and list", async () => {
     await createPanelWithExpert();
     const linkedDir = path.join(ctx.testHome, "linked-docs");
