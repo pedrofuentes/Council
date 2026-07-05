@@ -128,6 +128,9 @@ export const ENV_VARS: readonly EnvVarModel[] = [
 
 /**
  * Environment variables read by the CLI that are intentionally not part of the
- * user-facing configuration surface (internal detection only).
+ * user-facing configuration surface (internal/runtime detection only). A user
+ * never sets these to configure Council: `NODE_ENV` is populated by the test
+ * runner and read only for `=== "test"` detection, and `npm_config_user_agent`
+ * is populated by the package manager.
  */
-export const IGNORED_ENV_VARS: readonly string[] = ["npm_config_user_agent"];
+export const IGNORED_ENV_VARS: readonly string[] = ["NODE_ENV", "npm_config_user_agent"];
