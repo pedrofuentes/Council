@@ -1615,4 +1615,102 @@ describe("large-document chunking warning (#471)", () => {
     expect(doc?.filePath).toBe(file2024);
     expect(doc?.filename).toBe("summary.md");
   });
+
+  it("warns when a stored excludedDocs pattern matches no on-disk document (#2486)", async () => {
+    // Zero-match observability: a `docs --remove` exclusion whose target was
+    // later renamed, moved, or deleted silently stops matching, so the stored
+    // pattern becomes a no-op. process() must surface a warn notice so the
+    // user learns the exclusion is now ineffective — while a pattern that
+    // still matches a file on disk stays silent.
+    const dir = await makeDocsDir(env, "alice");
+    await fs.writeFile(path.join(dir, "keep.md"), "# Keep\n\nstill on disk");
+    await fs.writeFile(path.join(dir, "removed.md"), "# Removed\n\nexcluded on disk");
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+      // "removed.md" still matches a file on disk (live exclusion); "ghost.md"
+      // matches nothing (simulates a doc renamed/moved after `docs --remove`).
+      excludedDocs: ["removed.md", "ghost.md"],
+    });
+
+    const warnings: string[] = [];
+    const result = await proc.process("alice", dir, undefined, (msg) => warnings.push(msg));
+
+    // Only keep.md is processed; removed.md is excluded and never resurrected.
+    expect(result.filesProcessed).toBe(1);
+
+    // The stale pattern is surfaced to the user...
+    expect(warnings.some((w) => w.includes("ghost.md"))).toBe(true);
+    // ...but the still-effective pattern produces no zero-match warning.
+    expect(warnings.some((w) => w.includes("removed.md"))).toBe(false);
+  });
+
+  it("excludes a file via a legacy bare-basename pattern regardless of subdirectory (#2486)", async () => {
+    // Backward-compat: patterns stored before #2399 carry no path separator and
+    // match purely on the file's basename. A bare "legacy.md" must still exclude
+    // sub/legacy.md even though newer patterns are relative paths.
+    const dir = await makeDocsDir(env, "alice");
+    const sub = path.join(dir, "sub");
+    await fs.mkdir(sub, { recursive: true });
+    await fs.writeFile(path.join(dir, "keep.md"), "# Keep\n\nbody");
+    await fs.writeFile(path.join(sub, "legacy.md"), "# Legacy\n\nbody");
+
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+      excludedDocs: ["legacy.md"], // bare basename, no separator (legacy form)
+    });
+
+    const result = await proc.process("alice", dir);
+
+    // Only keep.md survives; sub/legacy.md is excluded purely by basename.
+    expect(result.filesProcessed).toBe(1);
+    const indexed = await env.docRepo.findByExpert("alice");
+    expect(indexed).toHaveLength(1);
+    expect(indexed[0]?.filename).toBe("keep.md");
+  });
+
+  it("matches an excludedDocs pattern regardless of separator style (#2486)", async () => {
+    // `docs --remove` persists patterns in POSIX (`/`) form (expert.ts), while
+    // the scanned relative path uses the platform separator. The processor
+    // normalizes a pattern's `/` to `path.sep` before comparing, so a stored
+    // pattern matches whether the runtime path uses `/` (POSIX) or `\` (Windows).
+    // Assert both the forward-slash form and the native-separator form exclude
+    // the same nested file (identical on POSIX; genuinely cross-separator on
+    // Windows, where the runtime path uses `\`).
+    const forms = ["reports/q1.md", ["reports", "q1.md"].join(path.sep)];
+    for (const [i, pattern] of forms.entries()) {
+      const slug = `sep${i}`;
+      const dir = await makeDocsDir(env, slug);
+      const reports = path.join(dir, "reports");
+      await fs.mkdir(reports, { recursive: true });
+      await fs.writeFile(path.join(reports, "q1.md"), "# Q1\n\nbody");
+      await fs.writeFile(path.join(dir, "keep.md"), "# Keep\n\nbody");
+
+      const proc = createDocumentProcessor({
+        engine: new StubEngine([VALID_PROFILE_JSON]),
+        documentRepo: env.docRepo,
+        profileRepo: env.profileRepo,
+        indexer: env.indexer,
+        config: CONFIG,
+        excludedDocs: [pattern],
+      });
+
+      const result = await proc.process(slug, dir);
+
+      // reports/q1.md is excluded despite pattern/path separator differences;
+      // only keep.md is processed.
+      expect(result.filesProcessed).toBe(1);
+      const indexed = await env.docRepo.findByExpert(slug);
+      expect(indexed).toHaveLength(1);
+      expect(indexed[0]?.filename).toBe("keep.md");
+    }
+  });
 });

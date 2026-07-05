@@ -188,35 +188,55 @@ export function createDocumentProcessor(options: DocumentProcessorOptions): Docu
   const excludedPatterns = new Set(options.excludedDocs ?? []);
 
   /**
-   * Check if a file path should be excluded based on the exclusion patterns.
-   * Supports both relative-path matching (new, #2399) and basename matching (legacy).
+   * Decide whether a scanned file matches any stored exclusion pattern.
    *
-   * @param absPath - The absolute path to the file
-   * @param docsRoot - The canonical docs root path
-   * @returns true if the file should be excluded
+   * Two matching modes are chosen per-pattern:
+   *   - Relative-path (#2399): a pattern containing a separator is compared —
+   *     after separator normalization — against the file's path *relative to
+   *     the canonical docs root* (`path.relative(docsRoot, absPath)`). This
+   *     path-scopes the exclusion, so `2023/summary.md` excludes only that file
+   *     and never a same-named `2024/summary.md`. `docs --remove` persists
+   *     patterns in POSIX (`/`) form (see `expert.ts`), so `/` is normalized to
+   *     the platform separator before comparison — a stored pattern therefore
+   *     matches whether the runtime path uses `/` (POSIX) or `\` (Windows).
+   *   - Legacy bare-basename: a separator-free pattern matches purely on the
+   *     file's basename, regardless of subdirectory, preserving pre-#2399
+   *     stored exclusions.
+   *
+   * @param absPath - Absolute path to the scanned file.
+   * @param docsRoot - Canonical docs root the relative path is resolved against.
+   * @param matchedPatterns - Optional sink; every pattern that matches is added
+   *   to it and scanning continues past the first hit, so callers can detect
+   *   patterns that matched no file at all (#2486). When omitted, matching
+   *   short-circuits on the first hit exactly as before.
+   * @returns true if the file should be excluded.
    */
-  const isExcludedPath = (absPath: string, docsRoot: string): boolean => {
+  const isExcludedPath = (
+    absPath: string,
+    docsRoot: string,
+    matchedPatterns?: Set<string>,
+  ): boolean => {
     if (excludedPatterns.size === 0) return false;
 
     const basename = path.basename(absPath);
     const relativePath = path.relative(docsRoot, absPath);
 
+    let excluded = false;
     for (const pattern of excludedPatterns) {
-      // If the pattern contains a path separator, treat it as a relative path
-      if (pattern.includes(path.sep) || pattern.includes("/")) {
-        // Normalize separators for cross-platform comparison
-        const normalizedPattern = pattern.split("/").join(path.sep);
-        if (relativePath === normalizedPattern) {
-          return true;
-        }
-      } else {
-        // Legacy: bare basename matching
-        if (basename === pattern) {
-          return true;
-        }
-      }
+      // A pattern with a separator is a relative path (its `/` normalized to
+      // the platform separator); otherwise it is a legacy bare basename.
+      const isMatch =
+        pattern.includes(path.sep) || pattern.includes("/")
+          ? relativePath === pattern.split("/").join(path.sep)
+          : basename === pattern;
+      if (!isMatch) continue;
+      if (matchedPatterns === undefined) return true;
+      // Record the live pattern and keep scanning so a file matched by several
+      // patterns marks all of them effective (avoids false zero-match warnings).
+      matchedPatterns.add(pattern);
+      excluded = true;
     }
-    return false;
+    return excluded;
   };
 
   /**
@@ -226,18 +246,55 @@ export function createDocumentProcessor(options: DocumentProcessorOptions): Docu
    * Rejected/unknown/unsupported buckets are left untouched — they carry
    * their own retention semantics.
    *
+   * When an `onWarning` sink is supplied, every stored pattern that matched
+   * NONE of the scanned candidate files is reported through it (#2486): a
+   * pattern goes stale when its target is renamed/moved/deleted after
+   * `docs --remove`, silently turning the exclusion into a no-op, so surfacing
+   * it lets the user notice and re-issue the removal. `needsProcessing` passes
+   * no sink, keeping this observability on the user-facing `process` path.
+   *
    * @param detection - The detection result from the document scanner
    * @param docsRoot - The canonical docs root path for relative-path matching
+   * @param onWarning - Optional best-effort sink for zero-match notices
    * @returns A filtered detection result with excluded files removed
    */
-  function applyExclusions(detection: DetectionResult, docsRoot: string): DetectionResult {
+  function applyExclusions(
+    detection: DetectionResult,
+    docsRoot: string,
+    onWarning?: (message: string) => void,
+  ): DetectionResult {
     if (excludedPatterns.size === 0) return detection;
-    return {
+
+    // Only track which patterns are "live" when a sink is listening for
+    // zero-match notices; `needsProcessing` (no sink) keeps the original
+    // short-circuiting fast path.
+    const matchedPatterns = onWarning ? new Set<string>() : undefined;
+    const filtered: DetectionResult = {
       ...detection,
-      newFiles: detection.newFiles.filter((f) => !isExcludedPath(f.path, docsRoot)),
-      modifiedFiles: detection.modifiedFiles.filter((f) => !isExcludedPath(f.path, docsRoot)),
-      unchangedFiles: detection.unchangedFiles.filter((f) => !isExcludedPath(f.path, docsRoot)),
+      newFiles: detection.newFiles.filter(
+        (f) => !isExcludedPath(f.path, docsRoot, matchedPatterns),
+      ),
+      modifiedFiles: detection.modifiedFiles.filter(
+        (f) => !isExcludedPath(f.path, docsRoot, matchedPatterns),
+      ),
+      unchangedFiles: detection.unchangedFiles.filter(
+        (f) => !isExcludedPath(f.path, docsRoot, matchedPatterns),
+      ),
     };
+
+    if (matchedPatterns !== undefined) {
+      for (const pattern of excludedPatterns) {
+        if (matchedPatterns.has(pattern)) continue;
+        warnProcessor(
+          onWarning,
+          `documents: exclusion "${pattern}" (from a prior \`docs --remove\`) matched no ` +
+            `document under the docs root; it may have been renamed, moved, or deleted, so the ` +
+            `exclusion no longer has any effect`,
+        );
+      }
+    }
+
+    return filtered;
   }
 
   /**
@@ -323,6 +380,10 @@ export function createDocumentProcessor(options: DocumentProcessorOptions): Docu
               ...(detectorLstatOverride ? { _lstatOverride: detectorLstatOverride } : {}),
             }),
         rootCanonical ?? docsPath,
+        // Only surface zero-match exclusion notices when a real docs root was
+        // scanned; if the root is absent every pattern trivially matches
+        // nothing, which is noise rather than a useful "stale exclusion" hint.
+        rootCanonical === null ? undefined : onWarning,
       );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
