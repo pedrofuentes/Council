@@ -10,19 +10,21 @@
  *
  * Pure projection of the persisted session: no engine, no LLM, no
  * network. Every section is derived only from data Council actually
- * stores for the panel (panel, experts, debate, turns).
+ * stores for the panel (panel, experts, debate, turns, and synthesized
+ * conclusions).
  *
- * Honesty constraint: Council persists only expert/human turns (see
- * `src/memory/persister.ts`) — it never persists a synthesized
- * conclusion. `council conclude` does run an LLM synthesis, but it prints
- * the result to stdout and persists nothing. So the `share` export cannot
- * contain a synthesized recommendation, key-disagreement breakdown, or
- * next-action list, and it must not pretend otherwise. Instead of
- * fabricating those sections (or implying that re-exporting after
- * `conclude` would fill them in), this renderer surfaces the real data it
- * has — each expert's latest turn, under "Panel Positions" — and states
- * plainly in the "Recommendation" section that no synthesis is stored,
- * pointing the reader at `council conclude` whose stdout they can copy in.
+ * Conclusion persistence: As of PR #2404, `council conclude` and
+ * `convene --conclude` (auto-conclude, the default) persist the
+ * synthesized Decision Framework into the panel's `config_json` blob,
+ * keyed by debate ID (see `src/cli/conclusion-store.ts`). When a
+ * persisted conclusion exists for the exported debate, `share` renders it
+ * in the "Recommendation" section — the synthesized recommendation prose,
+ * confidence, consensus points, tensions, and decision matrix. When no
+ * conclusion is stored (legacy panels, `convene --no-conclude`, or a
+ * debate never run through `conclude`), the "Recommendation" section
+ * displays a placeholder note pointing the reader to `council conclude`.
+ * Either way, "Panel Positions" always surfaces each expert's latest
+ * turn — real persisted data, not a synthesized comparison.
  */
 import type { Turn } from "../../memory/repositories/turns.js";
 import type { TranscriptDocument } from "../../memory/transcript.js";
