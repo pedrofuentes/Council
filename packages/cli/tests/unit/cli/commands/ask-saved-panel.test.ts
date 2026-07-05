@@ -379,4 +379,90 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
       await verifyDb.destroy();
     }
   });
+
+  it("sanitizes expert slugs in 'No expert found' error (terminal injection defense)", async () => {
+    // T-PRS2: Regression test for #2428 — expert slugs containing ANSI
+    // escape sequences, control characters, or newlines in the "No expert
+    // found" error were emitted unsanitized, enabling terminal injection
+    // when processing untrusted saved panels. The fix applies
+    // toSingleLineDisplay() to each slug before writing to stderr.
+    //
+    // Use JSON.stringify to properly escape the malicious content in YAML.
+    const ansiSlug = "normal\x1B[31mREDTEXT\x1B[0m"; // ANSI red color
+    const newlineSlug = "newline\ninjection"; // newline injection
+    const maliciousYaml = [
+      `name: ${SAVED_PANEL_NAME}`,
+      "description: Panel with malicious slugs",
+      "experts:",
+      `  - slug: ${JSON.stringify(ansiSlug)}`,
+      "    displayName: Normal Expert",
+      "    role: Testing expert",
+      "    expertise:",
+      "      weightedEvidence:",
+      "        - Test expertise",
+      "      referenceCases: []",
+      "      notExpertIn: []",
+      "    epistemicStance: Test stance",
+      `  - slug: ${JSON.stringify(newlineSlug)}`,
+      "    displayName: Newline Expert",
+      "    role: Testing expert",
+      "    expertise:",
+      "      weightedEvidence:",
+      "        - Test expertise",
+      "      referenceCases: []",
+      "      notExpertIn: []",
+      "    epistemicStance: Test stance",
+    ].join("\n");
+
+    await fs.writeFile(
+      path.join(dataHome, "panels", `${SAVED_PANEL_NAME}.yaml`),
+      maliciousYaml,
+      "utf-8",
+    );
+
+    let capturedError = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        capturedError += s;
+      },
+    });
+    cmd.exitOverride();
+
+    let thrown = "";
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        SAVED_PANEL_NAME,
+        "test question",
+        "--expert",
+        "nonexistent",
+        "--engine",
+        "mock",
+        "--format",
+        "json",
+      ]);
+    } catch (err) {
+      thrown = err instanceof Error ? err.message : String(err);
+    }
+
+    // The error message should mention the nonexistent expert.
+    expect(thrown.toLowerCase()).toMatch(/no expert.*nonexistent/);
+
+    // CRITICAL: The captured stderr must NOT contain raw ANSI sequences
+    // or newlines from the slugs — toSingleLineDisplay() should have
+    // stripped the ESC sequence and collapsed the newline to a space.
+    expect(capturedError).not.toContain("\x1B[31m"); // no raw ANSI red
+    expect(capturedError).not.toContain("\x1B[0m"); // no raw ANSI reset
+    // The newline slug should be collapsed - look for the pattern in the Available list
+    expect(capturedError).not.toMatch(/Available:.*newline\ninjection/); // no raw newline in slug list
+
+    // The sanitized slugs should appear in the error as single-line text.
+    // The ANSI sequences and newlines should be removed/collapsed.
+    expect(capturedError).toContain("Available:");
+    expect(capturedError).toMatch(/normal.*REDTEXT/); // ANSI stripped but text remains
+    expect(capturedError).toMatch(/newline injection/); // newline collapsed to space
+  });
 });
