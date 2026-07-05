@@ -31,7 +31,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Generate CycloneDX SBOM
-        run: npx --yes @cyclonedx/cyclonedx-npm@latest --ignore-npm-errors --output-format JSON --output-file sbom.cdx.json
+        run: npx --yes @cyclonedx/cyclonedx-npm@5.0.0 --ignore-npm-errors --output-format JSON --output-file sbom.cdx.json
         working-directory: packages/cli
 
       - name: Upload SBOM artifact
@@ -45,4 +45,5 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" packages/cli/sbom.cdx.json
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG_NAME" packages/cli/sbom.cdx.json
