@@ -260,6 +260,77 @@ describe("checkTopicAdmission", () => {
   });
 
   /**
+   * Bash currency residue (#2379).
+   *
+   * Bash expands single-digit positional parameters, so a double-quoted
+   * `$450/mo` arrives as `50/mo` and `$180K` as `80K` — no surviving `$`,
+   * no double space, and the unit suffix is still attached to digits, so
+   * none of the earlier signals fire. The residue is a bare number with a
+   * magnitude (`K`/`M`/`B`) or per-period rate (`/mo`, `/yr`, …) suffix
+   * and no `$`, in a topic that talks about money. Both conditions are
+   * required (money-context gating) so race distances ("10K run") and
+   * display resolutions ("4K monitor") never warn.
+   */
+  describe("bash currency residue — bare magnitude/rate with money context (#2379)", () => {
+    it.each([
+      // The two deterministic repros from issue #2379, post-mangling.
+      "ARPU is 50/mo and budget is 80K",
+      "Should we hire 3 junior engineers or 1 senior engineer with our remaining Q3 budget of 80K?",
+      // Magnitude variants: M suffix, decimal, thousands separator.
+      "budget is 2M",
+      "runway of 1,500K",
+      "Our funding is 2.5M for next year",
+      // Rate variants: long-form period, plural.
+      "server cost is 450/month",
+    ])("warns on mangled currency residue as a shell arg: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      expect(result.admitted).toBe(true);
+      const joined = result.warnings.join(" | ");
+      expect(joined).toMatch(/shell expansion/i);
+      expect(joined).toMatch(/--prompt-file/);
+    });
+
+    it.each(["interactive", "file"] as const)(
+      "does NOT warn on the same residue text for %s source (never shell-mangled)",
+      (source) => {
+        const result = checkTopicAdmission("ARPU is 50/mo and budget is 80K", source);
+        const joined = result.warnings.join(" | ");
+        expect(joined).not.toMatch(/shell expansion/i);
+      },
+    );
+
+    it.each([
+      // Intact literals (re-pins the #1022 guarantee against the new patterns).
+      "$450/mo server cost analysis",
+      "Should we afford $180K in runway?",
+      "Budget proposal: $2M for infrastructure",
+      "$999.99 pricing strategy",
+      // Bare number + suffix but NO money context: not currency residue.
+      "Should I train for a 10K race?",
+      "Should we upgrade to a 4K monitor?",
+      "Y2K retrospective lessons",
+      // Money context but no bare magnitude/rate number.
+      "How should we allocate the budget?",
+    ])("does NOT warn on legitimate arg topic: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+
+    it("pins the predicate: residue fires for arg source only", () => {
+      const mangled = "ARPU is 50/mo and budget is 80K";
+      expect(detectShellExpansion(mangled, "arg")).toBe(true);
+      expect(detectShellExpansion(mangled, "interactive")).toBe(false);
+      expect(detectShellExpansion(mangled, "file")).toBe(false);
+    });
+
+    it("pins the predicate: money context is required", () => {
+      expect(detectShellExpansion("Should I train for a 10K race?", "arg")).toBe(false);
+      expect(detectShellExpansion("Q3 budget of 80K", "arg")).toBe(true);
+    });
+  });
+
+  /**
    * Source-awareness (critical false-positive guard).
    *
    * The new residue signals are evidence of *already-happened* shell
