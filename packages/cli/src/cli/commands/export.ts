@@ -45,7 +45,11 @@ import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
 import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
-import { resolveSession, SessionNotFoundError } from "../session-resolver.js";
+import {
+  resolveSessionRef,
+  SessionNotFoundError,
+  type SessionRef,
+} from "../session-resolver.js";
 import {
   escapeBlockLeadingMarkdown,
   sanitizeExportBlock,
@@ -401,7 +405,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
       const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        let resolvedName: string;
+        let resolvedRef: SessionRef;
         // Buffer stderr from the first attempt so we can discard it if we
         // retry with a different data home — emitting it eagerly would
         // print a contradictory "No panel found matching ..." line right
@@ -411,7 +415,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           firstAttemptStderr += chunk;
         };
         try {
-          resolvedName = await resolveSession({
+          resolvedRef = await resolveSessionRef({
             db,
             dataHome,
             panelArg: panelName,
@@ -428,14 +432,14 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
             writeError(firstAttemptStderr);
             throw err;
           }
-          resolvedName = await resolveSession({
+          resolvedRef = await resolveSessionRef({
             db,
             dataHome: configuredDataHome,
             panelArg: panelName,
             writeError,
           });
         }
-        const doc = await loadFullPanelTranscript(db, resolvedName);
+        const doc = await loadFullPanelTranscript(db, resolvedRef.name, resolvedRef.panelId);
 
         if (opts.output !== undefined) {
           const rendered = renderForExport(doc, opts.format);
@@ -443,7 +447,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           await writeExportArtifact(resolvedOutput, rendered, opts.force === true, writeError);
           writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
           if (opts.format !== "json") {
-            const safeResolvedName = sanitizeExportLine(resolvedName);
+            const safeResolvedName = sanitizeExportLine(resolvedRef.name);
             write(
               `Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`,
             );
@@ -461,7 +465,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           return;
         }
         write(renderForExport(doc, opts.format));
-        const safeResolvedName = sanitizeExportLine(resolvedName);
+        const safeResolvedName = sanitizeExportLine(resolvedRef.name);
         write(`Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`);
       } finally {
         await db.destroy().catch((err: unknown) => {
@@ -747,17 +751,26 @@ function hasOnlyVeryShortTurns(turns: readonly { readonly content: string }[]): 
  * `originalPrompt` is the first debate's prompt (the original question
  * the panel was convened around); `latestDebate` reflects the most
  * recent debate's status/timestamps.
+ *
+ * When `panelId` is supplied (T-14: resolved from an exact session ULID) the
+ * exact session is loaded by id instead of by name, so two sessions created in
+ * the same second — which share one `findByName` handle — stay individually
+ * addressable.
  */
 async function loadFullPanelTranscript(
   db: CouncilDatabase,
   panelName: string,
+  panelId?: string,
 ): Promise<TranscriptDocument> {
   const panelRepo = new PanelRepository(db);
   const expertRepo = new ExpertRepository(db);
   const debateRepo = new DebateRepository(db);
   const turnRepo = new TurnRepository(db);
 
-  const panel = await panelRepo.findByName(panelName);
+  const panel =
+    panelId !== undefined
+      ? await panelRepo.findById(panelId)
+      : await panelRepo.findByName(panelName);
   if (!panel) {
     throw new Error(
       `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
