@@ -520,17 +520,3 @@ describe("buildExpertRetrievalScopes", () => {
     expect(buildExpertRetrievalScopes("ceo", [])).toEqual([{ sourceType: "expert", slug: "ceo" }]);
   });
 });
-
-describe("buildExpertRetrievalScopes", () => {
-  it("returns the expert scope first, then one panel scope per membership", () => {
-    expect(buildExpertRetrievalScopes("ceo", ["exec-team", "growth"])).toEqual([
-      { sourceType: "expert", slug: "ceo" },
-      { sourceType: "panel", slug: "exec-team" },
-      { sourceType: "panel", slug: "growth" },
-    ]);
-  });
-
-  it("returns just the expert scope when the expert belongs to no panels", () => {
-    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([{ sourceType: "expert", slug: "ceo" }]);
-  });
-});
