@@ -727,90 +727,99 @@ describe("resolveSession", () => {
       ).rejects.toBeInstanceOf(SessionNotFoundError);
     });
 
-    // Adversarial ULID edge cases: characterize existing resolver behavior for
-    // inputs that nearly match the ULID pattern but diverge on length, charset,
-    // or whitespace/case variations.
+    // Adversarial ULID edge cases: inputs that nearly match the ULID pattern but
+    // diverge on length or charset. Each malformed input is seeded as a panel's
+    // *id* (never its name), so the input can resolve ONLY via the ULID/findById
+    // path — making the ULID gate the sole gate under test. A correct
+    // ULID_PATTERN rejects the malformed input (findById is never reached, so
+    // resolution ends in not-found); a pattern broadened to accept it would reach
+    // findById and resolve to the seeded holder, failing these assertions.
     describe("ULID adversarial coverage", () => {
-      it("rejects a 25-character input (one char short of ULID length)", async () => {
-        // Seed a panel name matching the input to prove it's treated as a name
-        // (not a ULID) when the pattern check fails on length.
-        await seedPanelReturning("01ZZZZZZZZZZZZZZZZZZZZZZZ");
+      // Insert a panel with a caller-chosen `id`, bypassing create()'s ulid() so
+      // a malformed, ULID-shaped string can exist as a real panel id while the
+      // panel's name stays distinct (no exact-name or prefix match for it).
+      async function seedPanelWithId(id: string, name: string): Promise<void> {
+        const now = new Date().toISOString();
+        await db
+          .insertInto("panels")
+          .values({
+            id,
+            name,
+            topic: `Topic for ${name}`,
+            copilot_home: path.join(testHome, "copilot"),
+            config_json: JSON.stringify({ template: "code-review", mode: "freeform" }),
+            created_at: now,
+            updated_at: now,
+          })
+          .execute();
+      }
 
-        // The input matches a panel NAME but is 25 chars (not 26), so the ULID
-        // pattern check fails. The resolver treats it as a name/prefix. Since
-        // there's an exact match, it should resolve to that panel.
-        const ref = await resolveSessionRef({
-          db,
-          dataHome: testHome,
-          panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZ", // 25 chars
-          writeError: () => undefined,
-          isNonInteractive: () => true,
-        });
-        expect(ref.name).toBe("01ZZZZZZZZZZZZZZZZZZZZZZZ");
+      it("does not resolve a 25-char input (one short of ULID length) even to a panel whose id is that string", async () => {
+        const malformed = "01ZZZZZZZZZZZZZZZZZZZZZZZ"; // 25 chars — one short of a ULID
+        // The panel with this exact id is reachable ONLY via findById; its name
+        // differs, so there is no exact-name or prefix match for `malformed`.
+        await seedPanelWithId(malformed, "holder-for-25char-input");
+
+        // Correct ULID_PATTERN: 25 chars fails looksLikeUlid, findById is never
+        // reached, and resolution ends in not-found. A pattern broadened to
+        // accept 25-char inputs would reach findById and resolve to the holder —
+        // failing this assertion. That is what makes this test discriminating.
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: malformed,
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
       });
 
-      it("rejects a 27-character input (one char over ULID length)", async () => {
-        // Seed a panel name matching the input to prove it's treated as a name
-        // (not a ULID) when the pattern check fails on length.
-        await seedPanelReturning("01ZZZZZZZZZZZZZZZZZZZZZZZZZ");
+      it("does not resolve a 27-char input (one over ULID length) even to a panel whose id is that string", async () => {
+        const malformed = "01ZZZZZZZZZZZZZZZZZZZZZZZZZ"; // 27 chars — one over a ULID
+        // Reachable ONLY via findById (name differs from `malformed`).
+        await seedPanelWithId(malformed, "holder-for-27char-input");
 
-        // The input matches a panel NAME but is 27 chars (not 26), so the ULID
-        // pattern check fails. The resolver treats it as a name/prefix.
-        const ref = await resolveSessionRef({
-          db,
-          dataHome: testHome,
-          panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZZZ", // 27 chars
-          writeError: () => undefined,
-          isNonInteractive: () => true,
-        });
-        expect(ref.name).toBe("01ZZZZZZZZZZZZZZZZZZZZZZZZZ");
+        // Correct ULID_PATTERN rejects the 27-char input (findById unreached →
+        // not-found); a pattern broadened to accept it resolves to the holder.
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: malformed,
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
       });
 
-      it("rejects ULID-length input with excluded Crockford chars (I, L, O, U)", async () => {
-        // Seed panel names matching the inputs to prove they're treated as names
-        // (not ULIDs) when the pattern check fails on excluded charset.
-        await seedPanelReturning("01IIIIIIIIIIIIIIIIIIIIIIII");
-        await seedPanelReturning("01LLLLLLLLLLLLLLLLLLLLLLLL");
-        await seedPanelReturning("01OOOOOOOOOOOOOOOOOOOOOOOO");
-        await seedPanelReturning("01UUUUUUUUUUUUUUUUUUUUUUUU");
+      it("does not resolve ULID-length inputs with excluded Crockford chars (I, L, O, U) even to panels whose ids are those strings", async () => {
+        // Crockford base32 excludes I, L, O, U. Each string is 26 chars but uses
+        // an excluded letter, so a correct ULID_PATTERN rejects it. Seed each as
+        // a panel id (with a distinct name) so only findById could ever reach it.
+        const excludedCharIds = [
+          "01IIIIIIIIIIIIIIIIIIIIIIII", // I excluded
+          "01LLLLLLLLLLLLLLLLLLLLLLLL", // L excluded
+          "01OOOOOOOOOOOOOOOOOOOOOOOO", // O excluded
+          "01UUUUUUUUUUUUUUUUUUUUUUUU", // U excluded
+        ];
+        for (const [index, malformed] of excludedCharIds.entries()) {
+          await seedPanelWithId(malformed, `holder-for-excluded-char-${index}`);
+        }
 
-        // Crockford base32 excludes I, L, O, U to avoid ambiguity — these should
-        // not match the ULID pattern. Resolver treats them as names/prefixes.
-        const refI = await resolveSessionRef({
-          db,
-          dataHome: testHome,
-          panelArg: "01IIIIIIIIIIIIIIIIIIIIIIII", // I excluded
-          writeError: () => undefined,
-          isNonInteractive: () => true,
-        });
-        expect(refI.name).toBe("01IIIIIIIIIIIIIIIIIIIIIIII");
-
-        const refL = await resolveSessionRef({
-          db,
-          dataHome: testHome,
-          panelArg: "01LLLLLLLLLLLLLLLLLLLLLLLL", // L excluded
-          writeError: () => undefined,
-          isNonInteractive: () => true,
-        });
-        expect(refL.name).toBe("01LLLLLLLLLLLLLLLLLLLLLLLL");
-
-        const refO = await resolveSessionRef({
-          db,
-          dataHome: testHome,
-          panelArg: "01OOOOOOOOOOOOOOOOOOOOOOOO", // O excluded
-          writeError: () => undefined,
-          isNonInteractive: () => true,
-        });
-        expect(refO.name).toBe("01OOOOOOOOOOOOOOOOOOOOOOOO");
-
-        const refU = await resolveSessionRef({
-          db,
-          dataHome: testHome,
-          panelArg: "01UUUUUUUUUUUUUUUUUUUUUUUU", // U excluded
-          writeError: () => undefined,
-          isNonInteractive: () => true,
-        });
-        expect(refU.name).toBe("01UUUUUUUUUUUUUUUUUUUUUUUU");
+        // Correct pattern rejects every excluded-char input (findById unreached);
+        // a pattern broadened to allow I/L/O/U would resolve each to its holder.
+        for (const malformed of excludedCharIds) {
+          await expect(
+            resolveSessionRef({
+              db,
+              dataHome: testHome,
+              panelArg: malformed,
+              writeError: () => undefined,
+              isNonInteractive: () => true,
+            }),
+          ).rejects.toBeInstanceOf(SessionNotFoundError);
+        }
       });
 
       it("pattern match is case-insensitive but database lookup is case-sensitive", async () => {
