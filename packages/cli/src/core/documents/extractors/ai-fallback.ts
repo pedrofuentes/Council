@@ -19,10 +19,13 @@
  *     touching the SDK directly.
  *
  * Security guard-rails:
- *   - A built-in extension blocklist rejects executables, archives that
- *     are already handled natively, common media formats, and database
- *     files regardless of `mode` or `allowedExtensions`. The blocklist
- *     ALWAYS wins.
+ *   - A built-in extension blocklist (BLOCKLIST) rejects executables,
+ *     archives that are already handled natively, common media formats,
+ *     and database files. When `allowedExtensions` is non-empty, it
+ *     overrides the extension blocklist for listed extensions.
+ *   - A magic-byte signature blocklist (SIGNATURE_BLOCKLIST) applies
+ *     unconditionally to prevent renamed executables/media from reaching
+ *     the AI surface, even when their extension is allowlisted.
  *   - The fallback never logs raw buffer content. Only extension, size,
  *     and the first eight magic bytes (in hex) ever appear in logs or
  *     error messages.
@@ -104,8 +107,14 @@ export interface AiFallbackDeps {
 }
 
 /**
- * Built-in blocklist. These extensions ALWAYS bypass the AI fallback,
- * even when explicitly listed in `allowedExtensions`:
+ * Built-in extension blocklist. These extensions bypass the AI fallback
+ * when `allowedExtensions` is empty (default behavior). When
+ * `allowedExtensions` is non-empty, entries override this blocklist
+ * for listed extensions — enabling opt-in AI extraction for otherwise-blocked
+ * types (e.g., `.png` or `.key` files). The magic-byte SIGNATURE_BLOCKLIST
+ * (below) applies unconditionally, even to allowlisted extensions.
+ *
+ * Rationale:
  *   - Executables/scripts: huge attack surface; the AI surface should
  *     never be asked to "interpret" arbitrary code.
  *   - Archives that are already handled (zip/7z/rar/tar/gz): if the
