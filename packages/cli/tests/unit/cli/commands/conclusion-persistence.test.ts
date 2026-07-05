@@ -289,5 +289,9 @@ describe("conclusion persistence + export surfacing", () => {
 
     const md = await runExport(panelName, "markdown");
     expect(md).not.toContain("## Decision Framework");
+    // Positive assertions: verify export contains expected baseline content.
+    expect(md).toContain("## Transcript");
+    expect(md).toContain("Should we ship the MVP?");
+    expect(md).toContain("## Panel");
   });
 });
