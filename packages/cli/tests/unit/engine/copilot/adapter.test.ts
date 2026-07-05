@@ -1194,41 +1194,60 @@ describe("CopilotEngine — abort diagnostic sanitization (#1155)", () => {
   });
 
   /**
-   * Sentinel finding #2396 (item 2): no multi-turn `sawDelta`-reset regression
-   * test. The `sawDelta` flag (adapter.ts:~496) is a per-`#stream` local — it
-   * resets by construction on each `send()` call. This test drives two
-   * sequential `send()` calls on ONE expert engine instance and verifies the
-   * flag behavior is correct across both turns.
+   * Sentinel finding #2396 (item 2), tightened per #2480: the multi-turn
+   * `sawDelta`-reset regression test must be DISCRIMINATING. `sawDelta`
+   * (adapter.ts) is a per-`#stream` local that gates whether the terminal
+   * `assistant.message` (the full assembled response) is re-emitted as a
+   * `message.delta`: `onMessage` re-emits it ONLY when nothing streamed
+   * (`sawDelta === false`).
    *
-   * RED at this commit: no test exists yet — this is a coverage-gap finding.
+   * The earlier oracle merely asserted turn 2 emitted deltas — but incremental
+   * deltas are pushed by `onDelta` regardless of `sawDelta`, so forcing
+   * `let sawDelta = true` in the adapter left the test GREEN (mutation-proven
+   * non-discriminating). This version streams deltas on turn 1 (arming
+   * `sawDelta` inside turn 1's scope), then on turn 2 streams NO incremental
+   * deltas and delivers ONLY a terminal `assistant.message`. That terminal
+   * message surfaces as a single turn-2 `message.delta` IFF `sawDelta` was
+   * RESET to false at the start of turn 2; a non-reset flag makes `onMessage`
+   * early-return, yielding ZERO turn-2 deltas and failing the assertions below.
    */
   it("resets sawDelta flag between sequential send() calls on the same expert instance (#2396)", async () => {
     const engine = new CopilotEngine();
     await engine.start();
     await engine.addExpert(expertA);
 
-    // Turn 1: stream with deltas.
+    // Turn 1: stream incremental deltas. This drives `sawDelta` to true inside
+    // turn 1's per-`#stream` scope, leaving the guard "armed" so turn 2 can
+    // prove it was reset. A terminal message here would be suppressed — which
+    // is exactly the state we want carried (incorrectly) into turn 2 if the
+    // flag failed to reset.
     mockState.sendQueues.set("session-0", [
       { kind: "assistant.message_delta", data: { deltaContent: "first " } },
       { kind: "assistant.message_delta", data: { deltaContent: "turn" } },
     ]);
     const evts1 = await collect(engine.send({ prompt: "turn 1", expertId: expertA.id }));
-    const deltas1 = evts1.filter((e) => e.kind === "message.delta");
-    expect(deltas1.length).toBeGreaterThan(0);
+    const deltas1 = evts1.filter(
+      (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+    );
+    expect(deltas1.map((d) => d.text).join("")).toBe("first turn");
 
-    // Turn 2: stream with deltas on the SAME expert instance (same session).
+    // Turn 2: stream NO incremental deltas — deliver ONLY a terminal
+    // `assistant.message` carrying the full response. The adapter re-emits a
+    // terminal message as a single `message.delta` ONLY when `sawDelta` is
+    // false, which requires the flag to have reset at the start of turn 2.
     mockState.sendQueues.set("session-0", [
-      { kind: "assistant.message_delta", data: { deltaContent: "second " } },
-      { kind: "assistant.message_delta", data: { deltaContent: "turn" } },
+      { kind: "assistant.message", data: { content: "second turn" } },
     ]);
     const evts2 = await collect(engine.send({ prompt: "turn 2", expertId: expertA.id }));
-    const deltas2 = evts2.filter((e) => e.kind === "message.delta");
-    expect(deltas2.length).toBeGreaterThan(0);
+    const deltas2 = evts2.filter(
+      (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+    );
 
-    // Oracle: both turns emitted deltas, proving `sawDelta` correctly reset
-    // between the two `send()` calls. If the flag didn't reset, the second
-    // turn would fail to emit deltas or behave incorrectly.
-    expect(deltas1.length).toBeGreaterThan(0);
-    expect(deltas2.length).toBeGreaterThan(0);
+    // Discriminating oracle: turn 2 emitted EXACTLY the terminal message as one
+    // delta — which happens IFF `sawDelta` reset to false for turn 2. If the
+    // flag were not reset (e.g. `let sawDelta = true`), `onMessage` would
+    // early-return and turn 2 would emit ZERO deltas, failing both assertions.
+    expect(deltas2).toHaveLength(1);
+    expect(deltas2[0]?.text).toBe("second turn");
   });
 });
