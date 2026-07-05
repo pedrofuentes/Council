@@ -32,7 +32,16 @@ import { PlainRenderer } from "../plain.js";
 
 import { assignExpertColor, formatExpertPrefix, type ExpertColor } from "./colors.js";
 import { getSymbols } from "../symbols.js";
-import { toSingleLineDisplay } from "../../strip-control-chars.js";
+import { stripControlChars, toSingleLineDisplay } from "../../strip-control-chars.js";
+
+/**
+ * Sanitize untrusted multi-line text for terminal display.
+ * Matches chat-renderer.ts:200 treatment of streaming delta text.
+ * Strips ANSI/OSC/control chars and CR, but preserves legitimate newlines.
+ */
+function sanitizeMultiline(text: string): string {
+  return stripControlChars(text).replace(/\r/g, "");
+}
 
 /**
  * Wrapper that only mounts `useInput` when raw mode is supported.
@@ -107,11 +116,7 @@ interface StaticQualityNotice {
 }
 
 type StaticItem =
-  | StaticRoundHeader
-  | StaticTurn
-  | StaticRoundSeparator
-  | StaticPanel
-  | StaticQualityNotice;
+  StaticRoundHeader | StaticTurn | StaticRoundSeparator | StaticPanel | StaticQualityNotice;
 
 // --- Active turn (streaming) ---
 
@@ -228,13 +233,14 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
         retrying: null,
       };
     case "turn.delta": {
+      const sanitizedText = sanitizeMultiline(ev.text);
       if (s.activeTurn && s.activeTurn.expertSlug === ev.expertSlug) {
-        return { ...s, activeTurn: { ...s.activeTurn, text: s.activeTurn.text + ev.text } };
+        return { ...s, activeTurn: { ...s.activeTurn, text: s.activeTurn.text + sanitizedText } };
       }
       // Orphan delta — start a new active turn
       return {
         ...s,
-        activeTurn: { round: s.currentRound ?? 0, expertSlug: ev.expertSlug, text: ev.text },
+        activeTurn: { round: s.currentRound ?? 0, expertSlug: ev.expertSlug, text: sanitizedText },
       };
     }
     case "turn.end": {
