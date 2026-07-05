@@ -399,7 +399,7 @@ function buildReviewCommand(
       const pending = failed.length + needsReview.length;
 
       write(
-        `Panel "${panel}" has ${pending} ${pending === 1 ? "file" : "files"} that need review:\n\n`,
+        `Panel "${panel}" has ${pending} ${pending === 1 ? "file that needs" : "files that need"} review:\n\n`,
       );
       let suggestFormats = false;
       for (const file of failed) {
