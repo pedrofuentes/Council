@@ -45,6 +45,8 @@ import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
 import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
+import { selectStoredConclusion } from "../conclusion-store.js";
+import type { ConcludeOutput, StoredConclusion } from "../conclusion-synthesis.js";
 import {
   resolveSessionRef,
   SessionNotFoundError,
@@ -516,6 +518,71 @@ export function renderJson(doc: TranscriptDocument): string {
   );
 }
 
+/**
+ * Render the persisted Decision Framework as a markdown section, placed
+ * before the transcript. When the stored conclusion was synthesized from a
+ * different debate than the one being exported, a brief note flags it.
+ * Model-derived text is sanitized (single-line) and list items have their
+ * leading block markers neutralized to prevent outline spoofing (#2110).
+ */
+function renderDecisionFrameworkMarkdown(
+  conclusion: StoredConclusion,
+  exportedDebateId: string,
+): readonly string[] {
+  const out: ConcludeOutput = conclusion.output;
+  const lines: string[] = [];
+  lines.push("## Decision Framework");
+  lines.push("");
+  if (out.debateId !== exportedDebateId) {
+    lines.push(
+      `_Synthesized from debate ${sanitizeExportLine(out.debateId)}, which differs from the debate shown below._`,
+    );
+    lines.push("");
+  }
+  lines.push(`**Recommendation:** ${sanitizeExportLine(out.recommendation)}`);
+  lines.push(`**Confidence:** ${sanitizeExportLine(out.confidence)}`);
+  lines.push("");
+
+  lines.push("### Consensus");
+  lines.push("");
+  if (out.consensus.length === 0) {
+    lines.push("_None identified._");
+  } else {
+    for (const c of out.consensus) {
+      lines.push(`- ${escapeBlockLeadingMarkdown(sanitizeExportLine(c))}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("### Tensions");
+  lines.push("");
+  if (out.tensions.length === 0) {
+    lines.push("_None identified._");
+  } else {
+    for (const t of out.tensions) {
+      lines.push(`- ${escapeBlockLeadingMarkdown(sanitizeExportLine(t))}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("### Decision Matrix");
+  lines.push("");
+  if (out.decisionMatrix.length === 0) {
+    lines.push("_No dimensions identified._");
+    lines.push("");
+  } else {
+    for (const d of out.decisionMatrix) {
+      lines.push(`#### ${sanitizeExportLine(d.dimension)}`);
+      lines.push("");
+      for (const p of d.positions) {
+        lines.push(`- **${sanitizeExportLine(p.expert)}:** ${sanitizeExportLine(p.stance)}`);
+      }
+      lines.push("");
+    }
+  }
+  return lines;
+}
+
 export function renderMarkdown(doc: TranscriptDocument): string {
   const slugById = new Map<string, string>();
   const nameBySlug = new Map<string, string>();
@@ -549,6 +616,12 @@ export function renderMarkdown(doc: TranscriptDocument): string {
       );
     }
     lines.push("");
+  }
+
+  if (doc.conclusion !== undefined) {
+    for (const line of renderDecisionFrameworkMarkdown(doc.conclusion, doc.latestDebate.id)) {
+      lines.push(line);
+    }
   }
 
   lines.push("## Transcript");
@@ -805,6 +878,10 @@ async function loadFullPanelTranscript(
     roundOffset += maxRound + 1;
   }
 
+  // Prefer a conclusion stored for the exported (latest) debate; otherwise
+  // fall back to the newest stored conclusion (renderers note a mismatch).
+  const conclusion = selectStoredConclusion(panel.configJson, latestDebate.id);
+
   return {
     panel,
     experts,
@@ -817,5 +894,6 @@ async function loadFullPanelTranscript(
       endedAt: latestDebate.endedAt,
     },
     turns: flattenedTurns,
+    ...(conclusion !== undefined ? { conclusion } : {}),
   };
 }

@@ -85,6 +85,7 @@ import {
   renderPlain as renderConclusionPlain,
   synthesizeConclusion,
 } from "../conclusion-synthesis.js";
+import { persistConclusion } from "../conclusion-store.js";
 
 const DEFAULT_MAX_WORDS = 250;
 
@@ -1031,6 +1032,10 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                           model: defaultModel,
                           maxTranscriptChars: config.conclude.maxTranscriptChars,
                         });
+                        // Persist so `council export` can surface the
+                        // Decision Framework (T-15b). Stored in the panel's
+                        // config_json keyed by debate id — no migration.
+                        await persistConclusion(ctx.db, ctx.panelId, conclusion);
                         if (opts.format === "json") {
                           write(JSON.stringify({ kind: "conclusion", conclusion }) + "\n");
                         } else {
