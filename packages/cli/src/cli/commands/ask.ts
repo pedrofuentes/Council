@@ -548,30 +548,37 @@ async function runSavedPanelAsk(params: RunSavedPanelAskParams): Promise<void> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     writeError(
-      `!! Reference-document scan/retrieval failed (continuing without documents): ${msg}\n`,
+      `!! Reference-document scan/retrieval failed (continuing without documents): ${toSingleLineDisplay(
+        msg,
+      )}\n`,
     );
   }
 
-  await runOneExpertAsk({
-    db,
-    engineKind,
-    engineFactory,
-    expertSpec,
-    panelId: panelRow.id,
-    panelDisplayName: panel.name,
-    question,
-    maxWords,
-    format,
-    referenceDocuments,
-    write,
-    writeError,
-    quiet,
-  });
-
   // Clean up the ephemeral one-shot panel row (T-PR16 .3 from #2430): the row
   // was created for debate attribution but should not persist in the roster.
-  // Cascade delete removes the expert row and any turns/debates.
-  await new PanelRepository(db).delete(panelRow.id);
+  // Cascade delete removes the expert row and any turns/debates. Run cleanup in
+  // `finally` so a failure inside runOneExpertAsk (engine/network/DB error,
+  // Ctrl-C) can't leave the row orphaned (#2473). The delete's own failure is
+  // swallowed so it can never mask the original error, which still propagates.
+  try {
+    await runOneExpertAsk({
+      db,
+      engineKind,
+      engineFactory,
+      expertSpec,
+      panelId: panelRow.id,
+      panelDisplayName: panel.name,
+      question,
+      maxWords,
+      format,
+      referenceDocuments,
+      write,
+      writeError,
+      quiet,
+    });
+  } finally {
+    await new PanelRepository(db).delete(panelRow.id).catch(() => undefined);
+  }
 }
 
 function parseFormat(raw: string | undefined): RendererFormat {
