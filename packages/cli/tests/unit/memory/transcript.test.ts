@@ -33,7 +33,13 @@ interface SeedResult {
   debateId: string;
 }
 
-async function seed(testDir: string, opts: { withTurns?: boolean; status?: "completed" | "running" | "interrupted" | "aborted" | "failed" } = {}): Promise<SeedResult> {
+async function seed(
+  testDir: string,
+  opts: {
+    withTurns?: boolean;
+    status?: "completed" | "running" | "interrupted" | "aborted" | "failed";
+  } = {},
+): Promise<SeedResult> {
   const db = await createDatabase(path.join(testDir, "council.db"));
   try {
     const panelRepo = new PanelRepository(db);
@@ -410,6 +416,24 @@ describe("loadTranscript", () => {
     }
   });
 
+  it("throws id-worded error when panelId lookup fails (not name-worded)", async () => {
+    // When lookup is by panelId (ULID) and fails, the error must say "id" not "name".
+    // This ensures diagnostics correctly attribute the failure to the id-based lookup.
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      const nonexistentId = "01JAXB0000000000000000";
+      const panelName = "some-panel-name";
+      await expect(loadTranscript(fresh, panelName, undefined, nonexistentId)).rejects.toThrow(
+        /No panel found with id/i,
+      );
+      await expect(loadTranscript(fresh, panelName, undefined, nonexistentId)).rejects.toThrow(
+        new RegExp(nonexistentId),
+      );
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
   it("throws when the panel exists but has no debates", async () => {
     // Seed a bare panel with no debate.
     const fresh = await createDatabase(path.join(dir, "council.db"));
@@ -516,18 +540,21 @@ describe("synthesizeEvents", () => {
     { status: "completed", expectedReason: "completed" },
     { status: "aborted", expectedReason: "aborted" },
     { status: "failed", expectedReason: "failed" },
-  ] as const)("status='$status' maps to debate.end.reason='$expectedReason'", async ({ status, expectedReason }) => {
-    const seeded = await seed(dir, { status });
-    const fresh = await createDatabase(path.join(dir, "council.db"));
-    let doc: TranscriptDocument;
-    try {
-      doc = await loadTranscript(fresh, seeded.panelName);
-    } finally {
-      await fresh.destroy();
-    }
-    const events = synthesizeEvents(doc);
-    const last = events[events.length - 1];
-    expect(last?.kind).toBe("debate.end");
-    expect((last as { reason?: string }).reason).toBe(expectedReason);
-  });
+  ] as const)(
+    "status='$status' maps to debate.end.reason='$expectedReason'",
+    async ({ status, expectedReason }) => {
+      const seeded = await seed(dir, { status });
+      const fresh = await createDatabase(path.join(dir, "council.db"));
+      let doc: TranscriptDocument;
+      try {
+        doc = await loadTranscript(fresh, seeded.panelName);
+      } finally {
+        await fresh.destroy();
+      }
+      const events = synthesizeEvents(doc);
+      const last = events[events.length - 1];
+      expect(last?.kind).toBe("debate.end");
+      expect((last as { reason?: string }).reason).toBe(expectedReason);
+    },
+  );
 });
