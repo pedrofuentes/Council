@@ -86,7 +86,6 @@ import {
   synthesizeConclusion,
 } from "../conclusion-synthesis.js";
 
-const DEFAULT_MAX_ROUNDS = 4;
 const DEFAULT_MAX_WORDS = 250;
 
 /**
@@ -126,6 +125,29 @@ export function buildPersistedPanelDefinition(template: ResolvedPanelDefinition)
     ...(template.defaults !== undefined ? { defaults: template.defaults } : {}),
     experts: template.experts.map((e) => allowlistExpertDefinition(e)),
   };
+}
+
+/**
+ * Resolve the effective max-rounds for a debate using the precedence
+ * flag > template default > config default. This mirrors the TUI convene
+ * resolver (`tui/adapters/convene-resolve.ts`, which resolves
+ * `panel.defaults?.maxRounds ?? config.defaults.maxRounds`) and extends it
+ * with the CLI-only explicit `--max-rounds` flag, which outranks both. Keeping
+ * the two paths in lockstep ensures `convene --panel <t>` runs the same number
+ * of rounds the TUI runs and that `templates inspect` reports.
+ *
+ * @param flagMaxRounds explicit `--max-rounds` value, or `undefined` when the
+ *   flag was not passed on the command line
+ * @param templateMaxRounds the panel template's declared `defaults.maxRounds`,
+ *   or `undefined` when the template declares none
+ * @param configMaxRounds the config default (`config.defaults.maxRounds`)
+ */
+export function resolveMaxRounds(
+  flagMaxRounds: number | undefined,
+  templateMaxRounds: number | undefined,
+  configMaxRounds: number,
+): number {
+  return flagMaxRounds ?? templateMaxRounds ?? configMaxRounds;
 }
 
 /**
@@ -196,7 +218,12 @@ export interface ConveneOptions {
   readonly promptFile?: string | undefined;
   readonly experts?: string | readonly string[] | undefined;
   readonly format: RendererFormat;
-  readonly maxRounds: number;
+  /**
+   * Explicit `--max-rounds` value, or `undefined` when the flag was not passed.
+   * The effective round budget is resolved later against the panel template's
+   * `defaults.maxRounds` and the config default — see {@link resolveMaxRounds}.
+   */
+  readonly maxRounds?: number;
   readonly mode: DebateMode;
   readonly maxWords: number;
   readonly engine: EngineKind;
@@ -285,7 +312,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     )
     .option(
       "--max-rounds <n>",
-      "Max rounds (freeform mode only)",
+      "Max rounds for freeform mode. Defaults to the panel template's declared maxRounds, else config.defaults.maxRounds.",
       (v) => {
         const parsed = Number(v);
         if (!Number.isInteger(parsed)) {
@@ -293,7 +320,6 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
         }
         return parsed;
       },
-      DEFAULT_MAX_ROUNDS,
     )
     .addOption(
       new Option("--mode <kind>", "Debate mode")
@@ -527,7 +553,9 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           template: templateName,
           ...(raw.experts !== undefined ? { experts: raw.experts } : {}),
           format: parseFormat(raw.format),
-          maxRounds: Number.isFinite(raw.maxRounds) ? raw.maxRounds : DEFAULT_MAX_ROUNDS,
+          ...(raw.maxRounds !== undefined && Number.isFinite(raw.maxRounds)
+            ? { maxRounds: raw.maxRounds }
+            : {}),
           mode: raw.mode === "structured" ? "structured" : "freeform",
           maxWords: Number.isFinite(raw.maxWords) ? raw.maxWords : DEFAULT_MAX_WORDS,
           engine: resolvedEngine,
@@ -754,6 +782,17 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           }
         }
 
+        // Resolve the effective round budget now that the panel template is
+        // known: an explicit --max-rounds flag wins, else the template's
+        // declared defaults.maxRounds, else the config default. Mirrors the
+        // TUI convene resolver (tui/adapters/convene-resolve.ts) so the CLI and
+        // TUI honor a panel's declared round budget identically.
+        const maxRounds = resolveMaxRounds(
+          opts.maxRounds,
+          template.defaults?.maxRounds,
+          config.defaults.maxRounds,
+        );
+
         const dbPath = path.join(getCouncilHome(), "council.db");
         const db = await createDatabase(dbPath);
         try {
@@ -877,7 +916,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               configJson: JSON.stringify({
                 template: template.name,
                 mode: opts.mode,
-                maxRounds: opts.maxRounds,
+                maxRounds,
                 maxWords: opts.maxWords,
                 engine: opts.engine,
                 // T9: persist the FULL resolved panel definition so a session
@@ -926,7 +965,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               engineFactory: deps.engineFactory,
               experts: allExperts,
               debateConfig: {
-                maxRounds: opts.maxRounds,
+                maxRounds,
                 maxWordsPerResponse: opts.maxWords,
                 mode: opts.mode,
                 qualityGate: config.qualityGate,
@@ -954,7 +993,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                 write(`\n# ${toSingleLineDisplay(template.name)}\n`);
                 write(`Topic: ${truncatePrompt(toSingleLineDisplay(topic))}\n`);
                 write(
-                  `Mode: ${opts.mode} | Max rounds: ${opts.maxRounds} | Engine: ${opts.engine}\n`,
+                  `Mode: ${opts.mode} | Max rounds: ${maxRounds} | Engine: ${opts.engine}\n`,
                 );
                 if (humanNames.length > 0) {
                   write(`Human participants: ${humanNames.join(", ")}\n`);
