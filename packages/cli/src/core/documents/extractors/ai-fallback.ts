@@ -247,20 +247,17 @@ function detectKnownSignature(buffer: Buffer): string | null {
     if (b0 === 0x4d && b1 === 0x5a) return "Windows executable (MZ)";
     if (b0 === 0x7f && b1 === 0x45 && b2 === 0x4c && b3 === 0x46) return "ELF executable";
     // Mach-O: 0xFEEDFACE (32-bit BE), 0xCEFAEDFE (32-bit LE), 0xFEEDFACF (64-bit BE), 0xCFFAEDFE (64-bit LE)
-    // Also 0xCAFEBABE (universal binary)
+    // Also 0xCAFEBABE (universal binary), 0xCAFEBABF (fat 64-bit), byte-swapped variants
+    // #2459 item 2 + #2460: extended Mach-O fat/byte-swapped forms
     if (
       (b0 === 0xfe && b1 === 0xed && b2 === 0xfa && (b3 === 0xce || b3 === 0xcf)) ||
       (b0 === 0xce && b1 === 0xfa && b2 === 0xed && b3 === 0xfe) ||
       (b0 === 0xcf && b1 === 0xfa && b2 === 0xed && b3 === 0xfe) ||
-      (b0 === 0xca && b1 === 0xfe && b2 === 0xba && b3 === 0xbe)
+      (b0 === 0xca && b1 === 0xfe && b2 === 0xba && (b3 === 0xbe || b3 === 0xbf)) ||
+      (b0 === 0xbe && b1 === 0xba && b2 === 0xfe && b3 === 0xca) ||
+      (b0 === 0xbf && b1 === 0xba && b2 === 0xfe && b3 === 0xca)
     )
       return "Mach-O executable";
-    // SVG as XML or direct <svg
-    if (b0 === 0x3c && b1 === 0x73 && b2 === 0x76 && b3 === 0x67) return "SVG image";
-    if (b0 === 0x3c && b1 === 0x3f && b2 === 0x78 && b3 === 0x6d) {
-      // <?xml — could be SVG or other XML, treat as SVG for now (conservative)
-      return "SVG image";
-    }
   }
   if (buffer.length >= 5) {
     const b0 = buffer[0];
@@ -270,28 +267,47 @@ function detectKnownSignature(buffer: Buffer): string | null {
     const b4 = buffer[4];
     if (b0 === 0x7b && b1 === 0x5c && b2 === 0x72 && b3 === 0x74 && b4 === 0x66)
       return "Rich Text Format";
-    // Batch/CMD scripts (@echo)
-    if (
-      b0 === 0x40 &&
-      b1 === 0x65 &&
-      b2 === 0x63 &&
-      b3 === 0x68 &&
-      b4 === 0x6f &&
-      buffer.length >= 6 &&
-      buffer[5] === 0x20
-    )
-      return "Batch script";
+  }
+  // Batch/CMD scripts (@echo, case-insensitive for #2460)
+  if (buffer.length >= 6) {
+    const prefix = buffer.subarray(0, 6).toString("ascii").toLowerCase();
+    if (prefix === "@echo ") return "Batch script";
   }
   // SQLite database (16 bytes: "SQLite format 3\0")
   if (buffer.length >= 16) {
     const sqliteHeader = "SQLite format 3\0";
     if (buffer.subarray(0, 16).toString("ascii") === sqliteHeader) return "SQLite database";
   }
-  // Tar archive (ustar at offset 257, 6 bytes: "ustar\0")
+  // Tar archive: ustar at offset 257, 6 bytes: "ustar\0" or "ustar " (GNU tar, #2460)
   if (buffer.length >= 263) {
     const ustarMarker = buffer.subarray(257, 263).toString("ascii");
-    if (ustarMarker === "ustar\0") return "Tar archive";
+    if (ustarMarker === "ustar\0" || ustarMarker === "ustar ") return "Tar archive";
   }
+
+  // SVG detection (#2459 item 1): only classify as SVG when <svg root is actually present.
+  // Search a bounded prefix (after BOM/whitespace/<?xml prolog/comments/DOCTYPE) for <svg.
+  const svgResult = detectSvg(buffer);
+  if (svgResult !== null) return svgResult;
+
+  return null;
+}
+
+/**
+ * Detect SVG images by searching for an actual <svg root element in a bounded prefix.
+ * Fixes #2459 item 1: generic <?xml files without <svg root are NOT misclassified as SVG.
+ *
+ * Returns "SVG image" if <svg root is found, null otherwise.
+ */
+function detectSvg(buffer: Buffer): string | null {
+  // Scan up to first 2KB for <svg (handles BOM/whitespace/prolog/comments/DOCTYPE)
+  const scanLimit = Math.min(buffer.length, 2048);
+  const prefix = buffer.subarray(0, scanLimit).toString("utf8", 0, scanLimit);
+
+  // Look for <svg (case-insensitive, word boundary)
+  if (/<svg[\s>]/i.test(prefix)) {
+    return "SVG image";
+  }
+
   return null;
 }
 

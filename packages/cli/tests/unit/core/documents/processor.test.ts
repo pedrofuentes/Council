@@ -1575,4 +1575,44 @@ describe("large-document chunking warning (#471)", () => {
     expect(result.filesProcessed).toBe(1);
     expect(warnings.some((w) => /chunk/i.test(w))).toBe(true);
   });
+
+  it("scopes excludedDocs by relative path, not basename (#2399)", async () => {
+    // Issue #2399: exclusions keyed only on basename caused over-exclusion
+    // when same-named files existed in different subdirectories. Test
+    // that excluding `2023/summary.md` does NOT exclude `2024/summary.md`.
+    const dir = await makeDocsDir(env, "alice");
+    const dir2023 = path.join(dir, "2023");
+    const dir2024 = path.join(dir, "2024");
+    await fs.mkdir(dir2023, { recursive: true });
+    await fs.mkdir(dir2024, { recursive: true });
+    
+    const file2023 = path.join(dir2023, "summary.md");
+    const file2024 = path.join(dir2024, "summary.md");
+    await fs.writeFile(file2023, "# 2023 Summary\nData from 2023.");
+    await fs.writeFile(file2024, "# 2024 Summary\nData from 2024.");
+    
+    // Exclude only the 2023 file by its relative path
+    const proc = createDocumentProcessor({
+      engine: new StubEngine([VALID_PROFILE_JSON]),
+      documentRepo: env.docRepo,
+      profileRepo: env.profileRepo,
+      indexer: env.indexer,
+      config: CONFIG,
+      excludedDocs: ["2023/summary.md"], // Relative path
+    });
+    
+    const result = await proc.process("alice", dir);
+    
+    // Only the 2024 file should be processed; the 2023 file should be excluded
+    expect(result.filesProcessed).toBe(1);
+    expect(result.filesFailed).toBe(0);
+    
+    // Verify the indexed document is the 2024 file, not the 2023 file
+    const indexed = await env.docRepo.findByExpert("alice");
+    expect(indexed).toHaveLength(1);
+    const doc = indexed[0];
+    expect(doc).toBeDefined();
+    expect(doc?.filePath).toBe(file2024);
+    expect(doc?.filename).toBe("summary.md");
+  });
 });

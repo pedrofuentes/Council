@@ -97,7 +97,7 @@ export class PlainRenderer implements Renderer {
           break;
         }
         case "turn.delta":
-          this.write(evt.text);
+          this.write(this.sanitizeMultiline(evt.text));
           break;
         case "turn.end":
           this.write("\n");
@@ -219,6 +219,15 @@ export class PlainRenderer implements Renderer {
   /** Sanitize untrusted single-line text for terminal display. */
   private sanitizeLine(text: string): string {
     return stripControlChars(text).replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, " ");
+  }
+
+  /**
+   * Sanitize untrusted multi-line text for terminal display.
+   * Matches chat-renderer.ts:200 treatment of streaming delta text.
+   * Strips ANSI/OSC/control chars and CR, but preserves legitimate newlines.
+   */
+  private sanitizeMultiline(text: string): string {
+    return stripControlChars(text).replace(/\r/g, "");
   }
 
   private colorForExpert(slug: string): (text: string) => string {

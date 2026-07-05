@@ -22,6 +22,7 @@
 import type { DebateEvent, DebateEndReason, PanelMemberSnapshot } from "../core/types.js";
 import type { StoredConclusion } from "../cli/conclusion-synthesis.js";
 import { selectStoredConclusion } from "../cli/conclusion-store.js";
+import { toSingleLineDisplay } from "../cli/strip-control-chars.js";
 
 import type { CouncilDatabase } from "./db.js";
 import type { Panel } from "./repositories/panels.js";
@@ -80,8 +81,8 @@ export async function loadTranscript(
   if (!panel) {
     const message =
       panelId !== undefined
-        ? `No panel found with id '${panelId}' (name '${panelName}'). Run \`council sessions\` to list available panels.`
-        : `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`;
+        ? `No panel found with id '${toSingleLineDisplay(panelId)}' (name '${toSingleLineDisplay(panelName)}'). Run \`council sessions\` to list available panels.`
+        : `No panel found with name '${toSingleLineDisplay(panelName)}'. Run \`council sessions\` to list available panels.`;
     throw new Error(message);
   }
   const experts = await expertRepo.findByPanelId(panel.id);

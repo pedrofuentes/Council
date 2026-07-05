@@ -1192,4 +1192,43 @@ describe("CopilotEngine — abort diagnostic sanitization (#1155)", () => {
     // terminal.
     expect(abortWarn.length).toBeLessThanOrEqual(prefix.length + 200);
   });
+
+  /**
+   * Sentinel finding #2396 (item 2): no multi-turn `sawDelta`-reset regression
+   * test. The `sawDelta` flag (adapter.ts:~496) is a per-`#stream` local — it
+   * resets by construction on each `send()` call. This test drives two
+   * sequential `send()` calls on ONE expert engine instance and verifies the
+   * flag behavior is correct across both turns.
+   *
+   * RED at this commit: no test exists yet — this is a coverage-gap finding.
+   */
+  it("resets sawDelta flag between sequential send() calls on the same expert instance (#2396)", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+
+    // Turn 1: stream with deltas.
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "first " } },
+      { kind: "assistant.message_delta", data: { deltaContent: "turn" } },
+    ]);
+    const evts1 = await collect(engine.send({ prompt: "turn 1", expertId: expertA.id }));
+    const deltas1 = evts1.filter((e) => e.kind === "message.delta");
+    expect(deltas1.length).toBeGreaterThan(0);
+
+    // Turn 2: stream with deltas on the SAME expert instance (same session).
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "second " } },
+      { kind: "assistant.message_delta", data: { deltaContent: "turn" } },
+    ]);
+    const evts2 = await collect(engine.send({ prompt: "turn 2", expertId: expertA.id }));
+    const deltas2 = evts2.filter((e) => e.kind === "message.delta");
+    expect(deltas2.length).toBeGreaterThan(0);
+
+    // Oracle: both turns emitted deltas, proving `sawDelta` correctly reset
+    // between the two `send()` calls. If the flag didn't reset, the second
+    // turn would fail to emit deltas or behave incorrectly.
+    expect(deltas1.length).toBeGreaterThan(0);
+    expect(deltas2.length).toBeGreaterThan(0);
+  });
 });

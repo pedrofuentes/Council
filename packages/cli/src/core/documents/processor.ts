@@ -176,32 +176,67 @@ function warnProcessor(onWarning: ((message: string) => void) | undefined, messa
  */
 const LARGE_DOCUMENT_WARNING_BYTES = 100 * 1024;
 
-export function createDocumentProcessor(
-  options: DocumentProcessorOptions,
-): DocumentProcessor {
+export function createDocumentProcessor(options: DocumentProcessorOptions): DocumentProcessor {
   const { engine, documentRepo, profileRepo, indexer, config } = options;
   const detectorLstatOverride = options._detectorLstatOverride;
-  // Basenames explicitly un-indexed via `expert docs --remove`. Frozen at
+  // Patterns explicitly un-indexed via `expert docs --remove`. Frozen at
   // factory time; both `process` and `needsProcessing` treat matching
   // on-disk files as absent so a removed document is not resurrected.
-  const excludedBasenames = new Set(options.excludedDocs ?? []);
-  const isExcludedPath = (absPath: string): boolean =>
-    excludedBasenames.size > 0 && excludedBasenames.has(path.basename(absPath));
+  // Each pattern is either:
+  //   - A relative path (e.g., "2023/summary.md") for precise exclusion
+  //   - A bare basename (e.g., "summary.md", no separator) for legacy compatibility
+  const excludedPatterns = new Set(options.excludedDocs ?? []);
 
   /**
-   * Drop any detected file whose basename is in the exclusion set from the
+   * Check if a file path should be excluded based on the exclusion patterns.
+   * Supports both relative-path matching (new, #2399) and basename matching (legacy).
+   *
+   * @param absPath - The absolute path to the file
+   * @param docsRoot - The canonical docs root path
+   * @returns true if the file should be excluded
+   */
+  const isExcludedPath = (absPath: string, docsRoot: string): boolean => {
+    if (excludedPatterns.size === 0) return false;
+
+    const basename = path.basename(absPath);
+    const relativePath = path.relative(docsRoot, absPath);
+
+    for (const pattern of excludedPatterns) {
+      // If the pattern contains a path separator, treat it as a relative path
+      if (pattern.includes(path.sep) || pattern.includes("/")) {
+        // Normalize separators for cross-platform comparison
+        const normalizedPattern = pattern.split("/").join(path.sep);
+        if (relativePath === normalizedPattern) {
+          return true;
+        }
+      } else {
+        // Legacy: bare basename matching
+        if (basename === pattern) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  /**
+   * Drop any detected file matching an exclusion pattern from the
    * new/modified/unchanged buckets, so downstream processing, indexing, and
    * deletion reconciliation all behave as if the file were not on disk.
    * Rejected/unknown/unsupported buckets are left untouched — they carry
    * their own retention semantics.
+   *
+   * @param detection - The detection result from the document scanner
+   * @param docsRoot - The canonical docs root path for relative-path matching
+   * @returns A filtered detection result with excluded files removed
    */
-  function applyExclusions(detection: DetectionResult): DetectionResult {
-    if (excludedBasenames.size === 0) return detection;
+  function applyExclusions(detection: DetectionResult, docsRoot: string): DetectionResult {
+    if (excludedPatterns.size === 0) return detection;
     return {
       ...detection,
-      newFiles: detection.newFiles.filter((f) => !isExcludedPath(f.path)),
-      modifiedFiles: detection.modifiedFiles.filter((f) => !isExcludedPath(f.path)),
-      unchangedFiles: detection.unchangedFiles.filter((f) => !isExcludedPath(f.path)),
+      newFiles: detection.newFiles.filter((f) => !isExcludedPath(f.path, docsRoot)),
+      modifiedFiles: detection.modifiedFiles.filter((f) => !isExcludedPath(f.path, docsRoot)),
+      unchangedFiles: detection.unchangedFiles.filter((f) => !isExcludedPath(f.path, docsRoot)),
     };
   }
 
@@ -237,12 +272,11 @@ export function createDocumentProcessor(
       if (rootCanonical === null) return false;
       const known = await documentRepo.getChecksumMap(expertSlug);
       const detection = applyExclusions(
-        await detectDocumentChanges(
-          rootCanonical,
-          known,
-          config.supportedFormats,
-          { confinementRoot: rootCanonical, _rootIsCanonical: true },
-        ),
+        await detectDocumentChanges(rootCanonical, known, config.supportedFormats, {
+          confinementRoot: rootCanonical,
+          _rootIsCanonical: true,
+        }),
+        rootCanonical,
       );
       if (detection.newFiles.length > 0 || detection.modifiedFiles.length > 0) {
         return true;
@@ -282,19 +316,13 @@ export function createDocumentProcessor(
               rejectedFiles: [],
               unknownStateFiles: [],
             }
-          : await detectDocumentChanges(
-              rootCanonical,
-              known,
-              config.supportedFormats,
-              {
-                confinementRoot: rootCanonical,
-                _rootIsCanonical: true,
-                ...(onWarning ? { onWarning } : {}),
-                ...(detectorLstatOverride
-                  ? { _lstatOverride: detectorLstatOverride }
-                  : {}),
-              },
-            ),
+          : await detectDocumentChanges(rootCanonical, known, config.supportedFormats, {
+              confinementRoot: rootCanonical,
+              _rootIsCanonical: true,
+              ...(onWarning ? { onWarning } : {}),
+              ...(detectorLstatOverride ? { _lstatOverride: detectorLstatOverride } : {}),
+            }),
+        rootCanonical ?? docsPath,
       );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
@@ -406,9 +434,7 @@ export function createDocumentProcessor(
             filename: detail.filename,
             wordCount: 0,
             status: "failed",
-            ...(detail.errorMessage !== undefined
-              ? { error: detail.errorMessage }
-              : {}),
+            ...(detail.errorMessage !== undefined ? { error: detail.errorMessage } : {}),
           });
         }
         files.push(detail);
@@ -422,9 +448,7 @@ export function createDocumentProcessor(
             ...(config.maxFileSizeBytes !== undefined
               ? { maxFileSizeBytes: config.maxFileSizeBytes }
               : {}),
-            ...(config.aiFallback !== undefined
-              ? { aiFallback: config.aiFallback }
-              : {}),
+            ...(config.aiFallback !== undefined ? { aiFallback: config.aiFallback } : {}),
           });
 
           // AI fallback, `ask` mode: the file was recognized as
@@ -597,17 +621,11 @@ export function createDocumentProcessor(
           if (model === undefined) {
             throw new Error("documents: no engine models available for analysis");
           }
-          const existingProfile: PersonaProfile | null =
-            await profileRepo.findBySlug(expertSlug);
-          const profile = await analyzeDocuments(
-            successfullyExtracted,
-            existingProfile,
-            engine,
-            {
-              recencyWeightHalfLife: config.recencyHalfLifeDays,
-              model,
-            },
-          );
+          const existingProfile: PersonaProfile | null = await profileRepo.findBySlug(expertSlug);
+          const profile = await analyzeDocuments(successfullyExtracted, existingProfile, engine, {
+            recencyWeightHalfLife: config.recencyHalfLifeDays,
+            model,
+          });
           await profileRepo.upsert(expertSlug, profile);
           profileUpdated = true;
         } catch (err: unknown) {
