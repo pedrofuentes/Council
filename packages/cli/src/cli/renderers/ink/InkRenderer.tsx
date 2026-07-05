@@ -244,11 +244,14 @@ export function reduce(s: DebateState, ev: DebateEvent): DebateState {
       };
     }
     case "turn.end": {
-      // Move active turn to completed; dismiss recoverable errors
+      // Move active turn to completed; dismiss recoverable errors. The active
+      // turn's accumulated text is already sanitized (turn.delta path above);
+      // the terminal `ev.content` fallback is raw model output, so sanitize it
+      // to the same standard before it reaches the TTY (#2480).
       const text =
         s.activeTurn && s.activeTurn.expertSlug === ev.expertSlug && s.activeTurn.text.length > 0
           ? s.activeTurn.text
-          : ev.content;
+          : sanitizeMultiline(ev.content);
       const completedTurn: StaticTurn = {
         id: uid("t"),
         type: "turn",
