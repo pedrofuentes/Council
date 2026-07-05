@@ -1216,6 +1216,52 @@ describe("buildSessionsCommand", () => {
         expect(resumeLine).not.toBe(panelLine);
       });
 
+      it("surfaces each session's ULID as the unambiguous handle for resume/export (T-14)", async () => {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");
+        const db = await createDatabase(path.join(testHome, "council.db"));
+        const repo = new PanelRepository(db);
+        // Two sessions created in the same second collide on the timestamped
+        // resume/export name but keep distinct ULIDs.
+        const sharedName = "code-review-2026-06-16T23:47:21";
+        const first = await repo.create({
+          name: sharedName,
+          topic: "first topic",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: JSON.stringify({ template: "code-review" }),
+        });
+        const second = await repo.create({
+          name: sharedName,
+          topic: "second topic",
+          copilotHome: path.join(testHome, "copilot"),
+          configJson: JSON.stringify({ template: "code-review" }),
+        });
+        await db.destroy();
+
+        let captured = "";
+        const cmd = buildSessionsCommand((s) => {
+          captured += s;
+        });
+        await cmd.parseAsync(["node", "council-sessions"]);
+
+        const outputLines = captured.split("\n");
+        const resumeLines = outputLines.filter((line) => line.includes("resume/export:"));
+        // Both sessions share one colliding resume/export handle...
+        expect(resumeLines).toEqual([
+          `    resume/export: ${sharedName}`,
+          `    resume/export: ${sharedName}`,
+        ]);
+
+        // ...so each session's own ULID is surfaced as the handle that
+        // addresses it individually.
+        const firstIdLine = outputLines.find((line) => line.includes(first.id));
+        const secondIdLine = outputLines.find((line) => line.includes(second.id));
+        expect(firstIdLine).toContain(`id: ${first.id}`);
+        expect(firstIdLine).toContain("resume/export");
+        expect(secondIdLine).toContain(`id: ${second.id}`);
+        expect(secondIdLine).toContain("resume/export");
+      });
+
       it("derives a scannable topic label from the latest prompt when no topic is set (F35)", async () => {
         const { createDatabase } = await import("../../../../src/memory/db.js");
         const { PanelRepository } = await import("../../../../src/memory/repositories/panels.js");

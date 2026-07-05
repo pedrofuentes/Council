@@ -718,6 +718,77 @@ async function seedPanelWithIncompleteDebate(testHome: string): Promise<{ panelN
   }
 }
 
+/**
+ * T-14 (F-08): seed two sessions that share one timestamped resume/export
+ * name (as two `convene` runs in the same second would) but keep distinct
+ * ULIDs and distinct transcript content. A 5ms gap gives the second session a
+ * strictly-later `created_at` so `findByName` (the shared-handle path) picks it
+ * deterministically as the "latest".
+ */
+async function seedTwoSameSecondSessions(testHome: string): Promise<{
+  readonly sharedName: string;
+  readonly first: { readonly id: string; readonly marker: string };
+  readonly second: { readonly id: string; readonly marker: string };
+}> {
+  const db = await createDatabase(path.join(testHome, "council.db"));
+  try {
+    const panelRepo = new PanelRepository(db);
+    const expertRepo = new ExpertRepository(db);
+    const debateRepo = new DebateRepository(db);
+    const turnRepo = new TurnRepository(db);
+
+    const sharedName = "same-second-2026-06-16T23:47:21";
+
+    async function seedOne(marker: string): Promise<string> {
+      const panel = await panelRepo.create({
+        name: sharedName,
+        topic: `Topic ${marker}`,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      const cto = await expertRepo.create({
+        panelId: panel.id,
+        slug: "cto",
+        displayName: "CTO",
+        model: "claude-sonnet-4",
+        systemMessage: "You are a CTO.",
+      });
+      const debate = await debateRepo.create({
+        panelId: panel.id,
+        prompt: `Prompt ${marker}`,
+        moderator: "round-robin",
+      });
+      await turnRepo.create({
+        debateId: debate.id,
+        round: 0,
+        seq: 0,
+        speakerKind: "expert",
+        expertId: cto.id,
+        content: marker,
+      });
+      await debateRepo.update(debate.id, {
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      });
+      return panel.id;
+    }
+
+    const firstMarker = "FIRST-SESSION-UNIQUE-CONTENT-alpha";
+    const firstId = await seedOne(firstMarker);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const secondMarker = "SECOND-SESSION-UNIQUE-CONTENT-beta";
+    const secondId = await seedOne(secondMarker);
+
+    return {
+      sharedName,
+      first: { id: firstId, marker: firstMarker },
+      second: { id: secondId, marker: secondMarker },
+    };
+  } finally {
+    await db.destroy();
+  }
+}
+
 describe("buildExportCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
@@ -2850,6 +2921,48 @@ describe("buildExportCommand", () => {
     expect(captured).toContain("ship now to get user feedback fast");
     // Header should use the full resolved panel name.
     expect(captured).toContain(`# ${seed.panelName}`);
+  });
+
+  it("T-14: exports the exact session addressed by its ULID (two same-second sessions)", async () => {
+    const seed = await seedTwoSameSecondSessions(testHome);
+
+    let firstOut = "";
+    const firstCmd = buildExportCommand({
+      write: (s) => {
+        firstOut += s;
+      },
+    });
+    await firstCmd.parseAsync(["node", "council-export", seed.first.id]);
+
+    // The ULID addresses the earlier session precisely — its content only.
+    expect(firstOut).toContain(seed.first.marker);
+    expect(firstOut).not.toContain(seed.second.marker);
+
+    let secondOut = "";
+    const secondCmd = buildExportCommand({
+      write: (s) => {
+        secondOut += s;
+      },
+    });
+    await secondCmd.parseAsync(["node", "council-export", seed.second.id]);
+
+    expect(secondOut).toContain(seed.second.marker);
+    expect(secondOut).not.toContain(seed.first.marker);
+  });
+
+  it("T-14: export by the shared resume/export handle still resolves the latest session (unchanged)", async () => {
+    const seed = await seedTwoSameSecondSessions(testHome);
+
+    let out = "";
+    const cmd = buildExportCommand({
+      write: (s) => {
+        out += s;
+      },
+    });
+    await cmd.parseAsync(["node", "council-export", seed.sharedName]);
+
+    // `findByName` returns the most-recently-created match — the second session.
+    expect(out).toContain(seed.second.marker);
   });
 
   it("rejects ambiguous prefix and lists matching panels", async () => {

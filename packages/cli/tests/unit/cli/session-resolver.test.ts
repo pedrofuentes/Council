@@ -41,7 +41,11 @@ vi.mock("../../../src/core/template-loader.js", async (importOriginal) => {
 
 import { copyTemplateDb } from "../../helpers/template-db.js";
 import { CliUserError } from "../../../src/cli/cli-user-error.js";
-import { resolveSession, SessionNotFoundError } from "../../../src/cli/session-resolver.js";
+import {
+  resolveSession,
+  resolveSessionRef,
+  SessionNotFoundError,
+} from "../../../src/cli/session-resolver.js";
 import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { DebateRepository } from "../../../src/memory/repositories/debates.js";
 import { PanelRepository } from "../../../src/memory/repositories/panels.js";
@@ -603,6 +607,124 @@ describe("resolveSession", () => {
           missingPanelMode: "most-recently-debated",
         }),
       ).rejects.toThrow(/no panels with debates/i);
+    });
+  });
+
+  // T-14 (F-08): a session's ULID (its `id`, shown as `id:` by `council
+  // sessions`) is a stable, unique handle. Two sessions created in the same
+  // second share one timestamped resume/export name, so only the ULID can
+  // address each of them individually.
+  describe("ULID (session id) resolution (T-14)", () => {
+    async function seedPanelReturning(
+      name: string,
+      topic = `Topic for ${name}`,
+    ): Promise<{ readonly id: string; readonly name: string }> {
+      const panel = await new PanelRepository(db).create({
+        name,
+        topic,
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", mode: "freeform" }),
+      });
+      return { id: panel.id, name: panel.name };
+    }
+
+    it("resolveSessionRef resolves an exact session ULID to that session's id and name", async () => {
+      const seeded = await seedPanelReturning("ulid-panel-2026-06-16T23:47:21");
+
+      const ref = await resolveSessionRef({
+        db,
+        dataHome: testHome,
+        panelArg: seeded.id,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+      });
+
+      expect(ref.panelId).toBe(seeded.id);
+      expect(ref.name).toBe(seeded.name);
+    });
+
+    it("addresses each of two same-second sessions individually by its ULID", async () => {
+      // Two sessions created "in the same second" collide on the timestamped
+      // resume/export name but keep distinct ULIDs.
+      const sharedName = "code-review-2026-06-16T23:47:21";
+      const first = await seedPanelReturning(sharedName, "first topic");
+      const second = await seedPanelReturning(sharedName, "second topic");
+      expect(first.id).not.toBe(second.id);
+
+      const firstRef = await resolveSessionRef({
+        db,
+        dataHome: testHome,
+        panelArg: first.id,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+      });
+      const secondRef = await resolveSessionRef({
+        db,
+        dataHome: testHome,
+        panelArg: second.id,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+      });
+
+      // Each ULID resolves to its own session, even though both share the
+      // colliding display name.
+      expect(firstRef.panelId).toBe(first.id);
+      expect(secondRef.panelId).toBe(second.id);
+      expect(firstRef.name).toBe(sharedName);
+      expect(secondRef.name).toBe(sharedName);
+    });
+
+    it("resolveSession still returns the session name for a ULID (string contract preserved)", async () => {
+      const seeded = await seedPanelReturning("resolve-by-ulid-2026-06-16T23:47:21");
+
+      const resolved = await resolveSession({
+        db,
+        dataHome: testHome,
+        panelArg: seeded.id,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+      });
+
+      expect(resolved).toBe(seeded.name);
+    });
+
+    it("resolveSessionRef exposes the exact panel id for name and prefix resolution too", async () => {
+      const seeded = await seedPanelReturning("prefix-target-2026");
+
+      const byName = await resolveSessionRef({
+        db,
+        dataHome: testHome,
+        panelArg: seeded.name,
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+      });
+      expect(byName.panelId).toBe(seeded.id);
+      expect(byName.name).toBe(seeded.name);
+
+      const byPrefix = await resolveSessionRef({
+        db,
+        dataHome: testHome,
+        panelArg: "prefix-target",
+        writeError: () => undefined,
+        isNonInteractive: () => true,
+      });
+      expect(byPrefix.panelId).toBe(seeded.id);
+      expect(byPrefix.name).toBe(seeded.name);
+    });
+
+    it("falls through to normal not-found handling when a ULID-shaped arg matches no session", async () => {
+      await seedPanelReturning("some-other-panel");
+
+      await expect(
+        resolveSessionRef({
+          db,
+          dataHome: testHome,
+          // Valid ULID shape (Crockford base32, 26 chars) that matches no id.
+          panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZZ",
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        }),
+      ).rejects.toBeInstanceOf(SessionNotFoundError);
     });
   });
 });
