@@ -703,6 +703,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               const cause = err instanceof Error ? err.message : String(err);
               throw new Error(
                 `Could not auto-compose a panel for this topic. Use --template to specify one manually. (cause: ${cause})`,
+                { cause: err },
               );
             }
           } finally {

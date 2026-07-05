@@ -124,7 +124,7 @@ export function createPanelAuthoringSource(deps: PanelAuthoringDeps): PanelAutho
           handle = await fs.open(yamlPath, "wx");
         } catch (openErr) {
           if (errnoCode(openErr) === "EEXIST") {
-            throw new Error(`Panel YAML already exists at ${yamlPath}`);
+            throw new Error(`Panel YAML already exists at ${yamlPath}`, { cause: openErr });
           }
           throw openErr;
         }

@@ -810,6 +810,7 @@ async function acquireLock(lockPath: string): Promise<void> {
       if (Date.now() >= deadline) {
         throw new Error(
           `template-migration: timed out after ${LOCK_WAIT_TIMEOUT_MS}ms waiting for migration lock at ${lockPath}`,
+          { cause: err },
         );
       }
       await sleep(LOCK_POLL_INTERVAL_MS);

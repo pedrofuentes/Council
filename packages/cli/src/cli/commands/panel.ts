@@ -326,6 +326,7 @@ async function persistPanelArtifacts(
       throw new AggregateError(
         [err, ...rollbackErrors],
         `Failed to create panel "${name}" and rollback also failed — storage may be inconsistent`,
+        { cause: err },
       );
     }
     throw err;
@@ -1005,6 +1006,7 @@ function buildSaveCommand(write: Writer, writeError: Writer): Command {
                 [err, ...rollbackErrors],
                 `Failed to save panel "${finalPanelName}" and rollback of newly created experts ` +
                   `also failed — library may be inconsistent`,
+                { cause: err },
               );
             }
             throw err;

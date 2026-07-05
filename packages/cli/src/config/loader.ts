@@ -192,7 +192,7 @@ function parseConfig(raw: string, file: string): CouncilConfig {
     parsed = yaml.parse(raw);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse Council config (${file}): ${cause}`);
+    throw new Error(`Failed to parse Council config (${file}): ${cause}`, { cause: err });
   }
 
   // Empty file -> empty object -> defaults

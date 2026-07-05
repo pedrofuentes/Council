@@ -61,13 +61,13 @@ export async function readTextInput(
     const code =
       err instanceof Error && "code" in err ? (err as { code?: string }).code : undefined;
     if (code === "ENOENT") {
-      throw new Error(`Prompt file not found: ${source}`);
+      throw new Error(`Prompt file not found: ${source}`, { cause: err });
     }
     if (code === "EISDIR") {
-      throw new Error(`Prompt file is a directory, not a file: ${source}`);
+      throw new Error(`Prompt file is a directory, not a file: ${source}`, { cause: err });
     }
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`Could not read prompt file '${source}': ${detail}`);
+    throw new Error(`Could not read prompt file '${source}': ${detail}`, { cause: err });
   }
 }
 
