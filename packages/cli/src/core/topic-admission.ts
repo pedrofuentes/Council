@@ -81,6 +81,35 @@ export function boundCategoryScanText(topic: string): string {
   return topic.length > CATEGORY_SCAN_LIMIT ? topic.slice(0, CATEGORY_SCAN_LIMIT) : topic;
 }
 
+/**
+ * Bound the text handed to {@link detectShellExpansion} to the same
+ * {@link CATEGORY_SCAN_LIMIT} prefix as the category scan, but — when the
+ * input was actually truncated — first drop the possibly-bisected trailing
+ * token.
+ *
+ * The cap can slice through an intact currency literal such as `$180K`,
+ * leaving the bounded string ending in `…$1`; {@link SHELL_POSITIONAL_PATTERN}
+ * would then match that manufactured end-of-string boundary and warn on input
+ * that never touched a shell (#2453). Trimming the truncated slice back to the
+ * last whitespace removes the partial token.
+ *
+ * CRITICAL guard: if the truncated slice has NO whitespace at all (a single
+ * ≥{@link CATEGORY_SCAN_LIMIT}-char token), keep it intact — trimming it to an
+ * empty string would instead trip the `normalized.length === 0` residue signal
+ * and manufacture the opposite false positive.
+ *
+ * Applies ONLY to {@link detectShellExpansion}; the category scan keeps using
+ * the plain {@link boundCategoryScanText} prefix.
+ */
+function boundShellExpansionScanText(topic: string): string {
+  if (topic.length <= CATEGORY_SCAN_LIMIT) {
+    return topic;
+  }
+  const sliced = topic.slice(0, CATEGORY_SCAN_LIMIT);
+  const trimmed = sliced.replace(/\S+$/, "");
+  return trimmed.length === 0 ? sliced : trimmed;
+}
+
 const CATEGORIES: readonly PatternCategory[] = [
   {
     label: "violence/weapons",
@@ -225,10 +254,36 @@ const MONEY_CONTEXT_PATTERN =
 const MAX_WORDS_KEYWORD_BEFORE_RESIDUE = 3;
 const MAX_WORDS_KEYWORD_AFTER_RESIDUE = 2;
 
-/** Count whitespace-separated words strictly between two match spans. */
-function wordsBetween(text: string, from: number, to: number): number {
-  const between = text.slice(from, to).trim();
-  return between.length === 0 ? 0 : between.split(/\s+/).length;
+/**
+ * Word-count proximity predicate: `true` iff at most `max` whitespace-
+ * separated words fall strictly between two match spans `[from, to)`.
+ *
+ * Behaviourally identical to `slice(from, to).trim().split(/\s+/).length <=
+ * max`, but scans character-by-character and short-circuits as soon as the
+ * `(max + 1)`-th word start is seen — O(max), never O(distance) (#2454). A
+ * word start is a non-whitespace character at the range start or preceded by
+ * whitespace; leading/trailing whitespace of the range is ignored, matching
+ * the trim/split semantics exactly. Never materializes a slice or array, so a
+ * token-dense adversarial arg within the 8 KiB cap stays cheap.
+ */
+function wordsWithin(text: string, from: number, to: number, max: number): boolean {
+  let count = 0;
+  let prevWhitespace = true;
+  for (let i = from; i < to; i++) {
+    const ch = text[i];
+    if (ch === undefined) {
+      break;
+    }
+    const isWhitespace = /\s/.test(ch);
+    if (!isWhitespace && prevWhitespace) {
+      count++;
+      if (count > max) {
+        return false;
+      }
+    }
+    prevWhitespace = isWhitespace;
+  }
+  return count <= max;
 }
 
 function looksLikeCurrencyResidue(normalized: string): boolean {
@@ -261,11 +316,19 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
     const after = keywords[lo];
     return (
       (before !== undefined &&
-        wordsBetween(normalized, before.index + before[0].length, residue.index) <=
-          MAX_WORDS_KEYWORD_BEFORE_RESIDUE) ||
+        wordsWithin(
+          normalized,
+          before.index + before[0].length,
+          residue.index,
+          MAX_WORDS_KEYWORD_BEFORE_RESIDUE,
+        )) ||
       (after !== undefined &&
-        wordsBetween(normalized, residue.index + residue[0].length, after.index) <=
-          MAX_WORDS_KEYWORD_AFTER_RESIDUE)
+        wordsWithin(
+          normalized,
+          residue.index + residue[0].length,
+          after.index,
+          MAX_WORDS_KEYWORD_AFTER_RESIDUE,
+        ))
     );
   });
 }
@@ -273,9 +336,12 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
 /**
  * Confusable unit letters that survive NFKC (which folds fullwidth `Ｋ`
  * but not small-caps or Cyrillic/Greek lookalikes), folded to ASCII so
- * `80ᴋ`/`50ᴍ` cannot slip past the `[KMB]` residue class (#2426). Scoped
- * to the residue tier only — this layer is warn-only and advisory, so the
- * fold deliberately covers just the letters the residue patterns read.
+ * `80ᴋ`/`50ᴍ` cannot slip past the `[KMB]` residue class (#2426, #2456).
+ * Scoped to the residue tier only — this layer is warn-only and advisory,
+ * so the fold deliberately covers just the letters the residue patterns
+ * read. Greek lowercase `μ`/`β` are included as well; NFKC first folds the
+ * micro-sign `µ` (U+00B5) to `μ` (U+03BC), so the single `μ` entry catches
+ * both.
  *
  * The `(?<=\d)` guard folds ONLY digit-adjacent letters: these lookalikes
  * are ordinary letters in their own scripts (в/к are everyday Russian
@@ -283,7 +349,7 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
  * Cyrillic topic into lone-unit-suffix "residue" (Sentinel
  * SR-20260705-PR2435-e1d04a45, finding 2).
  */
-const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜΒ]/g;
+const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜμΒβ]/g;
 const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
   "ᴋ": "K",
   "К": "K",
@@ -294,10 +360,12 @@ const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
   "М": "M",
   "м": "M",
   "Μ": "M",
+  "μ": "M",
   "ʙ": "B",
   "В": "B",
   "в": "B",
   "Β": "B",
+  "β": "B",
 };
 
 function foldConfusableUnitLetters(text: string): string {
@@ -339,12 +407,20 @@ function foldConfusableUnitLetters(text: string): string {
  * Like the category scan, reads only the first {@link CATEGORY_SCAN_LIMIT}
  * characters: a CLI positional can be ARG_MAX-sized, and the proximity gate
  * walks keyword/residue match lists, so the input must be bounded for the
- * cost to stay O(1) in oversized-input terms. Signals that begin only after
- * the cap are sacrificed — same advisory-layer trade-off as
+ * cost to stay O(1) in oversized-input terms. This bound applies to the
+ * survivor signals too, so a `$VAR`/`$1` that first appears only after the
+ * cap does not warn, for any source. Signals that begin only after the cap
+ * are sacrificed — same advisory-layer trade-off as
  * {@link boundCategoryScanText}.
+ *
+ * The bounding is via {@link boundShellExpansionScanText}, which — when the
+ * input is actually truncated — drops the possibly-bisected trailing token
+ * first, so the cap slicing through an intact `$180K` cannot leave a phantom
+ * `$1` at the slice edge and manufacture a positional-survivor warning on
+ * input that never touched a shell (#2453).
  */
 export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
-  const normalized = boundCategoryScanText(topic).trim().normalize("NFKC");
+  const normalized = boundShellExpansionScanText(topic).trim().normalize("NFKC");
 
   // Survivor signals — meaningful for every source.
   if (SHELL_VAR_PATTERN.test(normalized) || SHELL_POSITIONAL_PATTERN.test(normalized)) {
