@@ -1078,7 +1078,17 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
                         // Persist so `council export` can surface the
                         // Decision Framework (T-15b). Stored in the panel's
                         // config_json keyed by debate id — no migration.
-                        await persistConclusion(ctx.db, ctx.panelId, conclusion);
+                        // Isolate persistence in its own try/catch so a DB
+                        // failure never hides the synthesized conclusion (#2410).
+                        try {
+                          await persistConclusion(ctx.db, ctx.panelId, conclusion);
+                        } catch (persistErr: unknown) {
+                          const msg =
+                            persistErr instanceof Error ? persistErr.message : String(persistErr);
+                          writeError(
+                            `⚠️  Could not save conclusion to session DB: ${toSingleLineDisplay(msg)}\n`,
+                          );
+                        }
                         if (opts.format === "json") {
                           write(JSON.stringify({ kind: "conclusion", conclusion }) + "\n");
                         } else {
