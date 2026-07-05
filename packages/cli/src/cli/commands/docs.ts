@@ -26,6 +26,7 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
+import { EXIT_USER_ERROR } from "../exit-codes.js";
 import {
   ensureDataDirectories,
   getCouncilDataHome,
@@ -44,10 +45,7 @@ import { toSingleLineDisplay } from "../strip-control-chars.js";
 import { createDatabase } from "../../memory/db.js";
 import { PanelLibraryRepository } from "../../memory/repositories/panel-library-repo.js";
 
-import {
-  createReadlineConfirmProvider,
-  type ConfirmProvider,
-} from "./confirm.js";
+import { createReadlineConfirmProvider, type ConfirmProvider } from "./confirm.js";
 import { validatePanelName } from "./panel.js";
 import { defaultErrorWriter, defaultWriter, type Writer } from "./writer.js";
 
@@ -93,9 +91,7 @@ interface CategorizedExtensions {
   readonly rich: readonly string[];
 }
 
-function categorizeExtensions(
-  extensions: readonly string[],
-): CategorizedExtensions {
+function categorizeExtensions(extensions: readonly string[]): CategorizedExtensions {
   const native: string[] = [];
   const rich: string[] = [];
   for (const ext of [...extensions].sort()) {
@@ -140,62 +136,58 @@ export function buildDocsCommand(
 
 function buildFormatsCommand(write: Writer, _writeError: Writer): Command {
   const cmd = new Command("formats");
-  cmd
-    .description("List supported document formats")
-    .action(async () => {
-      const config = await loadConfig();
-      const registered = getSupportedExtensions();
-      const { native, rich } = categorizeExtensions(registered);
-      const width = maxExtensionWidth(registered);
+  cmd.description("List supported document formats").action(async () => {
+    const config = await loadConfig();
+    const registered = getSupportedExtensions();
+    const { native, rich } = categorizeExtensions(registered);
+    const width = maxExtensionWidth(registered);
 
-      write("Supported Document Formats\n\n");
+    write("Supported Document Formats\n\n");
 
-      write("Native (text-based, no conversion needed):\n");
-      if (native.length === 0) {
-        write("  (none registered)\n");
-      } else {
-        for (const ext of native) write(formatExtensionLine(ext, width));
-      }
-      write("\n");
+    write("Native (text-based, no conversion needed):\n");
+    if (native.length === 0) {
+      write("  (none registered)\n");
+    } else {
+      for (const ext of native) write(formatExtensionLine(ext, width));
+    }
+    write("\n");
 
-      write("Rich Documents (converted to text):\n");
-      if (rich.length === 0) {
-        write("  (none registered)\n");
-      } else {
-        for (const ext of rich) write(formatExtensionLine(ext, width));
-      }
-      write("\n");
+    write("Rich Documents (converted to text):\n");
+    if (rich.length === 0) {
+      write("  (none registered)\n");
+    } else {
+      for (const ext of rich) write(formatExtensionLine(ext, width));
+    }
+    write("\n");
 
-      const aiMode = toSingleLineDisplay(config.documents.aiExtraction);
-      const allowed = config.documents.aiExtractionAllowedExtensions.map(toSingleLineDisplay);
-      write("AI Extraction (experimental):\n");
-      write(
-        "  What it is: builds a structured text description of files no native\n" +
-          "    extractor can read, so experts can still reference them (it never\n" +
-          "    sends your files to an external AI service).\n",
-      );
-      write(
-        "  When to enable: turn it on for panels that need otherwise-unreadable\n" +
-          "    files — 'ask' holds each file for your approval (run `council docs\n" +
-          "    extract <panel>`), 'auto' extracts and indexes them automatically.\n",
-      );
-      write(`  Status: ${aiMode}\n`);
-      if (allowed.length > 0) {
-        write(`  Allowed extensions: ${allowed.join(", ")}\n`);
-      }
-      write(
-        "  Configure: council config set documents.aiExtraction off|ask|auto\n",
-      );
-      write(
-        "  Limit to specific types: council config set documents.aiExtractionAllowedExtensions .ext1,.ext2\n",
-      );
-      write("\n");
+    const aiMode = toSingleLineDisplay(config.documents.aiExtraction);
+    const allowed = config.documents.aiExtractionAllowedExtensions.map(toSingleLineDisplay);
+    write("AI Extraction (experimental):\n");
+    write(
+      "  What it is: builds a structured text description of files no native\n" +
+        "    extractor can read, so experts can still reference them (it never\n" +
+        "    sends your files to an external AI service).\n",
+    );
+    write(
+      "  When to enable: turn it on for panels that need otherwise-unreadable\n" +
+        "    files — 'ask' holds each file for your approval (run `council docs\n" +
+        "    extract <panel>`), 'auto' extracts and indexes them automatically.\n",
+    );
+    write(`  Status: ${aiMode}\n`);
+    if (allowed.length > 0) {
+      write(`  Allowed extensions: ${allowed.join(", ")}\n`);
+    }
+    write("  Configure: council config set documents.aiExtraction off|ask|auto\n");
+    write(
+      "  Limit to specific types: council config set documents.aiExtractionAllowedExtensions .ext1,.ext2\n",
+    );
+    write("\n");
 
-      const limitMb = config.documents.maxFileSizeMB;
-      write(
-        `File size limit: ${limitMb} MB (configure: council config set documents.maxFileSizeMB <value>)\n`,
-      );
-    });
+    const limitMb = config.documents.maxFileSizeMB;
+    write(
+      `File size limit: ${limitMb} MB (configure: council config set documents.maxFileSizeMB <value>)\n`,
+    );
+  });
   return cmd;
 }
 
@@ -209,8 +201,7 @@ function buildFormatsCommand(write: Writer, _writeError: Writer): Command {
  * surfacing a raw `findByName` null check.
  */
 export type PanelScanLookupResult =
-  | { readonly kind: "not-found" }
-  | { readonly kind: "scanned"; readonly result: PanelScanResult };
+  { readonly kind: "not-found" } | { readonly kind: "scanned"; readonly result: PanelScanResult };
 
 export interface DocsCommandDeps {
   /** Override the panel scan step (used by tests to avoid DB + FS). */
@@ -242,10 +233,7 @@ export interface DocsCommandDeps {
  * SAME `validatePanelName`/PANEL_NAME_RE rule used by `panel delete`, then
  * assert the resolved path is contained even if validation ever weakens.
  */
-export function resolveManagedDocsDir(
-  dataHome: string,
-  panelName: string,
-): string {
+export function resolveManagedDocsDir(dataHome: string, panelName: string): string {
   validatePanelName(panelName);
   const panelsRoot = path.resolve(path.join(dataHome, "panels"));
   const managedDocsDir = path.join(dataHome, "panels", panelName, "docs");
@@ -323,9 +311,7 @@ async function defaultScanPanel(panelName: string): Promise<PanelScanLookupResul
  * AI/engine integration is introduced — this gates `auto`-mode behavior
  * behind the `docs extract` confirmation prompt.
  */
-async function defaultExtractPanel(
-  panelName: string,
-): Promise<PanelScanLookupResult> {
+async function defaultExtractPanel(panelName: string): Promise<PanelScanLookupResult> {
   return scanPanelWithMode(panelName, "auto");
 }
 
@@ -363,11 +349,7 @@ function formatNumber(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-function buildReviewCommand(
-  write: Writer,
-  writeError: Writer,
-  deps: DocsCommandDeps,
-): Command {
+function buildReviewCommand(write: Writer, writeError: Writer, deps: DocsCommandDeps): Command {
   const cmd = new Command("review");
   cmd
     .description("Review files in a panel's docs corpus that couldn't be auto-processed")
@@ -386,9 +368,7 @@ function buildReviewCommand(
       }
 
       const failed = lookup.result.files.filter((f) => f.status === "failed");
-      const needsReview = lookup.result.files.filter(
-        (f) => f.status === "needs-review",
-      );
+      const needsReview = lookup.result.files.filter((f) => f.status === "needs-review");
       if (failed.length === 0 && needsReview.length === 0) {
         write(`Panel "${panel}": no files need review — all files are indexed.\n`);
         return;
@@ -416,9 +396,7 @@ function buildReviewCommand(
       }
       for (const file of needsReview) {
         const detected =
-          file.detectedFormat !== undefined
-            ? sanitizeAiText(file.detectedFormat)
-            : "";
+          file.detectedFormat !== undefined ? sanitizeAiText(file.detectedFormat) : "";
         const suffix = detected.length > 0 ? ` — ${detected}` : "";
         write(`  ⚠ ${file.filename} — awaiting AI-extraction review${suffix}\n`);
       }
@@ -439,32 +417,26 @@ function buildReviewCommand(
         write(`\nRun \`council docs formats\` to see supported file types.\n`);
       }
       if (aiMode === "off") {
-        write(
-          `Enable AI extraction with: council config set documents.aiExtraction ask\n`,
-        );
+        write(`Enable AI extraction with: council config set documents.aiExtraction ask\n`);
       }
-      const err = new CliUserError(
-        `Panel "${panel}" has ${pending} file(s) pending review.`,
-      );
+      const err = new CliUserError(`Panel "${panel}" has ${pending} file(s) pending review.`);
       err.exitCode = 1;
       throw err;
     });
   return cmd;
 }
 
-function buildExtractCommand(
-  write: Writer,
-  writeError: Writer,
-  deps: DocsCommandDeps,
-): Command {
+interface ExtractOptions {
+  readonly yes?: boolean;
+}
+
+function buildExtractCommand(write: Writer, writeError: Writer, deps: DocsCommandDeps): Command {
   const cmd = new Command("extract");
   cmd
-    .description(
-      "Run AI extraction on files a panel is holding for review (ask mode)",
-    )
+    .description("Run AI extraction on files a panel is holding for review (ask mode)")
     .argument("<panel>", "Panel name")
     .option("--yes", "Skip confirmation prompt (non-interactive runs)")
-    .action(async (panel: string, opts: { yes?: boolean }) => {
+    .action(async (panel: string, opts: ExtractOptions) => {
       const scanFn = deps.scanPanel ?? defaultScanPanel;
       const configFn = deps.loadConfigFn ?? loadConfig;
 
@@ -487,9 +459,7 @@ function buildExtractCommand(
         return;
       }
 
-      const needsReview = lookup.result.files.filter(
-        (f) => f.status === "needs-review",
-      );
+      const needsReview = lookup.result.files.filter((f) => f.status === "needs-review");
       if (needsReview.length === 0) {
         write(`Panel "${panel}": no files awaiting AI-extraction review.\n`);
         return;
@@ -500,13 +470,20 @@ function buildExtractCommand(
       );
       for (const file of needsReview) {
         const detected =
-          file.detectedFormat !== undefined
-            ? sanitizeAiText(file.detectedFormat)
-            : "";
+          file.detectedFormat !== undefined ? sanitizeAiText(file.detectedFormat) : "";
         const suffix = detected.length > 0 ? ` — ${detected}` : "";
-        write(`  ⚠ ${file.filename}${suffix}\n`);
+        write(`  ⚠ ${toSingleLineDisplay(file.filename)}${suffix}\n`);
       }
       write("\n");
+
+      // Non-TTY environments require --yes to proceed; exit with distinct
+      // code so automation can detect the skip (issue #2403 item 1).
+      if (opts.yes !== true && process.stdout.isTTY !== true) {
+        writeError("Not in an interactive terminal. Use --yes to proceed.\n");
+        const err = new CliUserError("Non-interactive terminal requires --yes flag");
+        err.exitCode = EXIT_USER_ERROR;
+        throw err;
+      }
 
       // Bypass confirmation prompt when --yes is passed
       if (opts.yes !== true) {
@@ -534,18 +511,22 @@ function buildExtractCommand(
       }
 
       const indexed = extractLookup.result.indexed;
-      write(
-        `AI extraction complete: ${indexed} ${indexed === 1 ? "file" : "files"} indexed.\n`,
-      );
+
+      // Zero files indexed is a detectable failure so automation can flag
+      // it (issue #2403 item 3).
+      if (indexed === 0) {
+        writeError("No files were indexed.\n");
+        const err = new CliUserError("AI extraction completed with zero files indexed");
+        err.exitCode = EXIT_USER_ERROR;
+        throw err;
+      }
+
+      write(`AI extraction complete: ${indexed} ${indexed === 1 ? "file" : "files"} indexed.\n`);
     });
   return cmd;
 }
 
-function buildDoctorCommand(
-  write: Writer,
-  writeError: Writer,
-  deps: DocsCommandDeps,
-): Command {
+function buildDoctorCommand(write: Writer, writeError: Writer, deps: DocsCommandDeps): Command {
   const cmd = new Command("doctor");
   cmd
     .description("Diagnostic health check for a panel's document pipeline")
@@ -572,19 +553,12 @@ function buildDoctorCommand(
       // word counts from the file array since the aggregates don't
       // track that.
       const indexedCount = result.indexed + result.unchanged;
-      const totalWords = indexedFiles.reduce(
-        (acc, f) => acc + (f.wordCount ?? 0),
-        0,
-      );
+      const totalWords = indexedFiles.reduce((acc, f) => acc + (f.wordCount ?? 0), 0);
       const failed = result.files.filter((f) => f.status === "failed");
       const needsReview = result.files.filter((f) => f.status === "needs-review");
       const corrupt = failed.filter((f) => f.errorKind === "corrupt-document");
-      const unsupported = failed.filter(
-        (f) => f.errorKind === "unsupported-format",
-      );
-      const encrypted = failed.filter(
-        (f) => f.errorKind === "encrypted-document",
-      );
+      const unsupported = failed.filter((f) => f.errorKind === "unsupported-format");
+      const encrypted = failed.filter((f) => f.errorKind === "encrypted-document");
       const pending = failed.length + needsReview.length;
 
       write(`Panel "${panel}" document health:\n`);
@@ -592,9 +566,7 @@ function buildDoctorCommand(
         `  ✓ ${formatNumber(indexedCount)} ${indexedCount === 1 ? "document" : "documents"} indexed (${formatNumber(totalWords)} ${totalWords === 1 ? "word" : "words"})\n`,
       );
       const pendingMarker = pending === 0 ? "✓" : "⚠";
-      write(
-        `  ${pendingMarker} ${pending} ${pending === 1 ? "file" : "files"} pending review`,
-      );
+      write(`  ${pendingMarker} ${pending} ${pending === 1 ? "file" : "files"} pending review`);
       if (pending > 0) {
         write(` (run 'council docs review ${panel}')`);
       }
@@ -627,8 +599,7 @@ function buildDoctorCommand(
           `  ✘ The managed docs folder could not be scanned — check permissions and that the path exists.\n`,
         );
       }
-      const linkedFailed =
-        result.foldersFailed - (result.managedFolderFailed ? 1 : 0);
+      const linkedFailed = result.foldersFailed - (result.managedFolderFailed ? 1 : 0);
       if (linkedFailed > 0) {
         write(
           `  ✘ ${linkedFailed} linked ${linkedFailed === 1 ? "folder" : "folders"} could not be scanned.\n`,

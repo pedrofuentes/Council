@@ -19,6 +19,7 @@ import {
   type PanelScanLookupResult,
 } from "../../../../src/cli/commands/docs.js";
 import type { ConfirmProvider } from "../../../../src/cli/commands/confirm.js";
+import { EXIT_USER_ERROR } from "../../../../src/cli/exit-codes.js";
 import type { CouncilConfig } from "../../../../src/config/index.js";
 import type { PanelScanResult } from "../../../../src/core/documents/panel-document-scanner.js";
 import type { ScanFileDetail } from "../../../../src/core/documents/scan-types.js";
@@ -29,10 +30,7 @@ interface RunOutcome {
   readonly error: unknown;
 }
 
-async function runDocs(
-  args: readonly string[],
-  deps: DocsCommandDeps = {},
-): Promise<RunOutcome> {
+async function runDocs(args: readonly string[], deps: DocsCommandDeps = {}): Promise<RunOutcome> {
   let stdout = "";
   let stderr = "";
   const cmd = buildDocsCommand(
@@ -54,10 +52,28 @@ async function runDocs(
   return { stdout, stderr, error };
 }
 
-function makeConfig(overrides: {
-  readonly aiExtraction?: "off" | "ask" | "auto";
-  readonly aiExtractionAllowedExtensions?: readonly string[];
-} = {}): CouncilConfig {
+/**
+ * Run docs command in a TTY environment (for tests that expect confirmation prompt).
+ */
+async function runDocsInTTY(
+  args: readonly string[],
+  deps: DocsCommandDeps = {},
+): Promise<RunOutcome> {
+  const originalIsTTY = process.stdout.isTTY;
+  process.stdout.isTTY = true;
+  try {
+    return await runDocs(args, deps);
+  } finally {
+    process.stdout.isTTY = originalIsTTY;
+  }
+}
+
+function makeConfig(
+  overrides: {
+    readonly aiExtraction?: "off" | "ask" | "auto";
+    readonly aiExtractionAllowedExtensions?: readonly string[];
+  } = {},
+): CouncilConfig {
   return {
     defaults: {
       model: "claude-sonnet-4.5",
@@ -73,9 +89,7 @@ function makeConfig(overrides: {
     },
     documents: {
       aiExtraction: overrides.aiExtraction ?? "ask",
-      aiExtractionAllowedExtensions: [
-        ...(overrides.aiExtractionAllowedExtensions ?? []),
-      ],
+      aiExtractionAllowedExtensions: [...(overrides.aiExtractionAllowedExtensions ?? [])],
       maxFileSizeMB: 50,
     },
     chat: {
@@ -87,9 +101,7 @@ function makeConfig(overrides: {
   } as CouncilConfig;
 }
 
-function fileDetail(
-  overrides: Partial<ScanFileDetail> & { filename: string },
-): ScanFileDetail {
+function fileDetail(overrides: Partial<ScanFileDetail> & { filename: string }): ScanFileDetail {
   const inferredExt = (() => {
     const dot = overrides.filename.lastIndexOf(".");
     return dot >= 0 ? overrides.filename.slice(dot).toLowerCase() : "";
@@ -140,14 +152,12 @@ describe("council docs extract", () => {
       ],
     });
     const { factory, confirm } = confirmProviderReturning(true);
-    const extractPanel = vi.fn(
-      async (): Promise<PanelScanLookupResult> => ({
-        kind: "scanned",
-        result: scanResult({ indexed: 1 }),
-      }),
-    );
+    const extractPanel = vi.fn(async (): Promise<PanelScanLookupResult> => ({
+      kind: "scanned",
+      result: scanResult({ indexed: 1 }),
+    }));
 
-    const { stdout, error } = await runDocs(["extract", "finance"], {
+    const { stdout, error } = await runDocsInTTY(["extract", "finance"], {
       scanPanel: async () => ({ kind: "scanned", result: review }),
       loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
       confirmProvider: factory,
@@ -168,14 +178,12 @@ describe("council docs extract", () => {
       files: [fileDetail({ filename: "deck.key", status: "needs-review" })],
     });
     const { factory, confirm } = confirmProviderReturning(false);
-    const extractPanel = vi.fn(
-      async (): Promise<PanelScanLookupResult> => ({
-        kind: "scanned",
-        result: scanResult({ indexed: 1 }),
-      }),
-    );
+    const extractPanel = vi.fn(async (): Promise<PanelScanLookupResult> => ({
+      kind: "scanned",
+      result: scanResult({ indexed: 1 }),
+    }));
 
-    const { stdout, error } = await runDocs(["extract", "finance"], {
+    const { stdout, error } = await runDocsInTTY(["extract", "finance"], {
       scanPanel: async () => ({ kind: "scanned", result: review }),
       loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
       confirmProvider: factory,
@@ -190,12 +198,10 @@ describe("council docs extract", () => {
 
   it("reports nothing to do and never prompts when no files await review", async () => {
     const { factory, confirm } = confirmProviderReturning(true);
-    const extractPanel = vi.fn(
-      async (): Promise<PanelScanLookupResult> => ({
-        kind: "scanned",
-        result: scanResult({ indexed: 1 }),
-      }),
-    );
+    const extractPanel = vi.fn(async (): Promise<PanelScanLookupResult> => ({
+      kind: "scanned",
+      result: scanResult({ indexed: 1 }),
+    }));
 
     const { stdout, error } = await runDocs(["extract", "finance"], {
       scanPanel: async () => ({
@@ -221,21 +227,17 @@ describe("council docs extract", () => {
 
   it("guides the user to enable AI extraction when mode is off", async () => {
     const { factory, confirm } = confirmProviderReturning(true);
-    const extractPanel = vi.fn(
-      async (): Promise<PanelScanLookupResult> => ({
-        kind: "scanned",
-        result: scanResult({ indexed: 1 }),
-      }),
-    );
+    const extractPanel = vi.fn(async (): Promise<PanelScanLookupResult> => ({
+      kind: "scanned",
+      result: scanResult({ indexed: 1 }),
+    }));
 
     const { stdout, error } = await runDocs(["extract", "finance"], {
       scanPanel: async () => ({
         kind: "scanned",
         result: scanResult({
           needsReview: 1,
-          files: [
-            fileDetail({ filename: "deck.key", status: "needs-review" }),
-          ],
+          files: [fileDetail({ filename: "deck.key", status: "needs-review" })],
         }),
       }),
       loadConfigFn: async () => makeConfig({ aiExtraction: "off" }),
@@ -276,12 +278,10 @@ describe("council docs extract", () => {
       ],
     });
     const { factory, confirm } = confirmProviderReturning(false); // Return false to prove it's bypassed
-    const extractPanel = vi.fn(
-      async (): Promise<PanelScanLookupResult> => ({
-        kind: "scanned",
-        result: scanResult({ indexed: 1 }),
-      }),
-    );
+    const extractPanel = vi.fn(async (): Promise<PanelScanLookupResult> => ({
+      kind: "scanned",
+      result: scanResult({ indexed: 1 }),
+    }));
 
     const { stdout, error } = await runDocs(["extract", "finance", "--yes"], {
       scanPanel: async () => ({ kind: "scanned", result: review }),
@@ -296,5 +296,107 @@ describe("council docs extract", () => {
     expect(extractPanel).toHaveBeenCalledWith("finance");
     expect(stdout).toContain("deck.key");
     expect(stdout).toMatch(/1 file.*indexed/i);
+  });
+
+  // Issue #2403 fixes below
+
+  it("exits with nonzero code when not in TTY and --yes is not passed", async () => {
+    const review = scanResult({
+      needsReview: 1,
+      files: [fileDetail({ filename: "deck.key", status: "needs-review" })],
+    });
+    const originalIsTTY = process.stdout.isTTY;
+    process.stdout.isTTY = undefined; // Simulate real non-TTY (piped/CI)
+
+    try {
+      const { stderr, error } = await runDocs(["extract", "finance"], {
+        scanPanel: async () => ({ kind: "scanned", result: review }),
+        loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
+        confirmProvider: confirmProviderReturning(true).factory,
+        extractPanel: vi.fn(),
+      });
+
+      expect(error).toBeDefined();
+      expect((error as { exitCode?: number }).exitCode).toBe(EXIT_USER_ERROR);
+      expect(stderr).toMatch(/not.*interactive.*terminal|use.*--yes/i);
+    } finally {
+      process.stdout.isTTY = originalIsTTY;
+    }
+  });
+
+  it("exits with nonzero code when extraction completes with zero files indexed", async () => {
+    const review = scanResult({
+      needsReview: 1,
+      files: [fileDetail({ filename: "deck.key", status: "needs-review" })],
+    });
+    const { factory } = confirmProviderReturning(true);
+    const extractPanel = vi.fn(async (): Promise<PanelScanLookupResult> => ({
+      kind: "scanned",
+      result: scanResult({ indexed: 0 }), // Zero files indexed
+    }));
+
+    const { error } = await runDocs(["extract", "finance", "--yes"], {
+      scanPanel: async () => ({ kind: "scanned", result: review }),
+      loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
+      confirmProvider: factory,
+      extractPanel,
+    });
+
+    expect(error).toBeDefined();
+    expect((error as { exitCode?: number }).exitCode).toBe(EXIT_USER_ERROR);
+  });
+
+  it("sanitizes untrusted filenames before displaying them", async () => {
+    const maliciousFilename = "test\x1B[2J\x1B[Hfile.key"; // ANSI clear screen + home
+    const review = scanResult({
+      needsReview: 1,
+      files: [
+        fileDetail({
+          filename: maliciousFilename,
+          status: "needs-review",
+          detectedFormat: "unknown",
+        }),
+      ],
+    });
+    const { factory } = confirmProviderReturning(false);
+
+    const { stdout } = await runDocsInTTY(["extract", "finance"], {
+      scanPanel: async () => ({ kind: "scanned", result: review }),
+      loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
+      confirmProvider: factory,
+      extractPanel: vi.fn(),
+    });
+
+    // Should NOT contain the raw ANSI escape sequences
+    expect(stdout).not.toContain("\x1B[2J");
+    expect(stdout).not.toContain("\x1B[H");
+    // Should contain the sanitized version
+    expect(stdout).toContain("testfile.key");
+  });
+
+  // Issue #2403 item 5: --help flag documentation test.
+  // Note: This test cannot fully validate help output because Commander.js
+  // writes help directly to process.stdout, which bypasses our write() mocks.
+  // Manual verification confirms --yes appears in `council docs extract --help`.
+  it("documents the --yes flag (limitation: cannot capture Commander help output)", async () => {
+    // Attempting to run --help throws Commander's exit override error,
+    // but the option registration happens during command build
+    const cmd = buildDocsCommand(
+      () => {
+        /* noop write */
+      },
+      () => {
+        /* noop writeError */
+      },
+      {},
+    );
+
+    // Verify the extract subcommand exists and has the --yes option
+    const extractCmd = cmd.commands.find((c) => c.name() === "extract");
+    expect(extractCmd).toBeDefined();
+
+    const yesOption = extractCmd?.options.find((o) => o.long === "--yes");
+    expect(yesOption).toBeDefined();
+    expect(yesOption?.description).toMatch(/skip.*confirmation|non-interactive/i);
   });
 });
