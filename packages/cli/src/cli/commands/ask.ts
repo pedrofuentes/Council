@@ -558,8 +558,15 @@ async function runSavedPanelAsk(params: RunSavedPanelAskParams): Promise<void> {
   // was created for debate attribution but should not persist in the roster.
   // Cascade delete removes the expert row and any turns/debates. Run cleanup in
   // `finally` so a failure inside runOneExpertAsk (engine/network/DB error,
-  // Ctrl-C) can't leave the row orphaned (#2473). The delete's own failure is
-  // swallowed so it can never mask the original error, which still propagates.
+  // Ctrl-C) can't leave the row orphaned (#2473).
+  //
+  // On the ERROR path the delete's own failure is swallowed so it can never
+  // mask the original error, which is propagating out of the `try` (#2487). On
+  // the SUCCESS path (#2491) the answer was already delivered, so silently
+  // swallowing a delete failure would leave the operator no signal that a row
+  // leaked — surface a sanitized best-effort warning instead (mirrors the
+  // RAG-warning sink so an untrusted DB error can't inject into the terminal).
+  let primarySucceeded = false;
   try {
     await runOneExpertAsk({
       db,
@@ -576,8 +583,20 @@ async function runSavedPanelAsk(params: RunSavedPanelAskParams): Promise<void> {
       writeError,
       quiet,
     });
+    primarySucceeded = true;
   } finally {
-    await new PanelRepository(db).delete(panelRow.id).catch(() => undefined);
+    try {
+      await new PanelRepository(db).delete(panelRow.id);
+    } catch (cleanupErr: unknown) {
+      if (primarySucceeded) {
+        const msg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+        writeError(
+          `!! Ephemeral-panel cleanup failed (answer already delivered): ${toSingleLineDisplay(
+            msg,
+          )}\n`,
+        );
+      }
+    }
   }
 }
 
