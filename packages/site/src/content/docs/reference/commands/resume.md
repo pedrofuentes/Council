@@ -17,7 +17,7 @@ council resume [options] [panel]
 
 | Argument | Description | Default |
 | --- | --- | --- |
-| `[panel]` | Panel name to resume (as shown by \`council sessions\`) | — |
+| `[panel]` | Panel name or ULID (as shown by \`council sessions\`) | — |
 
 ## Options
 

@@ -387,7 +387,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
   const cmd = new Command("export");
   cmd
     .description("Export a panel transcript to markdown, json, adr, or share format")
-    .argument("<panel>", "Panel name to export (as shown by `council sessions`)")
+    .argument("<panel>", "Panel name or ULID (as shown by `council sessions`)")
     .addOption(
       new Option("--format <kind>", "Output format")
         .choices([...EXPORT_FORMATS])
