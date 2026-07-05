@@ -811,12 +811,14 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
 
         if (opts.remove !== undefined) {
           const target = opts.remove;
+          const safeTarget = toSingleLineDisplay(target);
+          const safeSlug = toSingleLineDisplay(slug);
           const rows = await documentRepo.findByExpert(slug);
           const match = rows.find(
             (r) => r.status !== "removed" && (r.filename === target || r.filePath === target),
           );
           if (!match) {
-            const msg = `Document "${target}" not found in the index for "${slug}".`;
+            const msg = `Document "${safeTarget}" not found in the index for "${safeSlug}".`;
             writeError(msg + "\n");
             throw new CliUserError(msg);
           }
@@ -872,6 +874,7 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           // #2397: Wrap markRemoved + library.update to maintain atomicity.
           // If library.update fails, rollback the document status to prevent
           // inconsistent state (document marked removed but not in excludedDocs).
+          const priorStatus = match.status;
           await documentRepo.markRemoved(match.id);
           const alreadyExcluded = expert.excludedDocs ?? [];
           const nextExcluded = alreadyExcluded.includes(relativePath)
@@ -880,14 +883,34 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           try {
             await library.update(slug, { excludedDocs: nextExcluded });
           } catch (err: unknown) {
-            // Rollback: restore document to "processed" status since the
-            // excludedDocs update failed. Surface the original error with
-            // recovery guidance.
-            await documentRepo.updateStatus(match.id, "processed");
-            const detail = err instanceof Error ? err.message : String(err);
+            const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+            // Rollback to the document's ORIGINAL status (captured before
+            // markRemoved) — never a hardcoded "processed" that would clobber a
+            // "pending"/"failed" row (#2464). Wrap the rollback so a rollback
+            // failure cannot mask the original excludedDocs-update error:
+            // surface BOTH, the original as the primary message and both via an
+            // AggregateError cause.
+            try {
+              await documentRepo.updateStatus(match.id, priorStatus);
+            } catch (rollbackErr: unknown) {
+              const rollbackDetail = toSingleLineDisplay(
+                rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+              );
+              const msg =
+                `Failed to update expert "${safeSlug}" excludedDocs list: ${detail}\n` +
+                `The status rollback for "${safeTarget}" ALSO failed: ${rollbackDetail}. ` +
+                `The document may be left marked "removed"; run "council expert train ${safeSlug} --retrain" to reconcile.`;
+              writeError(msg + "\n");
+              throw new CliUserError(msg, {
+                cause: new AggregateError(
+                  [err as Error, rollbackErr as Error],
+                  "excludedDocs update failed and status rollback also failed",
+                ),
+              });
+            }
             const msg =
-              `Failed to update expert "${slug}" excludedDocs list: ${detail}\n` +
-              `The document "${target}" was not removed. Retry the operation.`;
+              `Failed to update expert "${safeSlug}" excludedDocs list: ${detail}\n` +
+              `The document "${safeTarget}" was not removed. Retry the operation.`;
             writeError(msg + "\n");
             throw new CliUserError(msg);
           }
@@ -896,10 +919,10 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
             await indexer.remove(match.filePath);
           } catch (err: unknown) {
             ftsCleanupFailed = true;
-            const detail = err instanceof Error ? err.message : String(err);
+            const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
             writeError(
-              `Warning: index entry for "${target}" could not be removed (${detail}). ` +
-                `Re-run "council expert train ${slug} --retrain" to repair the index.\n`,
+              `Warning: index entry for "${safeTarget}" could not be removed (${detail}). ` +
+                `Re-run "council expert train ${safeSlug} --retrain" to repair the index.\n`,
             );
           }
           // #382: do NOT report ✓ when the FTS5 cleanup failed. The row is
@@ -909,11 +932,11 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           // entries (clearForRetrain), so it repairs the stale entry.
           if (ftsCleanupFailed) {
             write(
-              `⚠ "${target}" removed from tracking but FTS index cleanup failed. ` +
-                `Re-run "council expert train ${slug} --retrain" to repair the index.\n`,
+              `⚠ "${safeTarget}" removed from tracking but FTS index cleanup failed. ` +
+                `Re-run "council expert train ${safeSlug} --retrain" to repair the index.\n`,
             );
           } else {
-            write(`✓ "${target}" removed from index. Profile will be updated on next use.\n`);
+            write(`✓ "${safeTarget}" removed from index. Profile will be updated on next use.\n`);
           }
           return;
         }
@@ -1460,10 +1483,22 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
             await library.update(slug, { excludedDocs });
           } catch (err: unknown) {
             const detail = err instanceof Error ? err.message : String(err);
+            // Word the recovery hint for the input kind actually used to
+            // re-add the document(s): a URL source can't be retried with
+            // `--file` (#2464).
+            const usedFile = fileInputs.length > 0;
+            const usedUrl = urlInputs.length > 0;
+            const retryInvocation =
+              usedFile && usedUrl
+                ? "--file <path> / --url <url>"
+                : usedUrl
+                  ? "--url <url>"
+                  : "--file <path>";
+            const retryNoun = usedFile && usedUrl ? "document(s)" : usedUrl ? "URL(s)" : "file(s)";
             const msg =
               `Failed to update expert "${slug}" excludedDocs list after re-adding documents: ${detail}\n` +
               `The documents were successfully committed, but the exclusion list could not be pruned.\n` +
-              `Recovery: re-run "council expert train ${slug} --file <path>" for the same file(s) to retry the excludedDocs update.`;
+              `Recovery: re-run "council expert train ${slug} ${retryInvocation}" for the same ${retryNoun} to retry the excludedDocs update.`;
             writeError(msg + "\n");
             throw new CliUserError(msg);
           }
