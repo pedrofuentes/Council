@@ -398,7 +398,17 @@
                 "variadic": false
               }
             ],
-            "options": [],
+            "options": [
+              {
+                "flags": "--yes",
+                "description": "Skip confirmation prompt (non-interactive runs)",
+                "long": "--yes",
+                "required": false,
+                "optional": false,
+                "variadic": false,
+                "negate": false
+              }
+            ],
             "subcommands": []
           },
           {

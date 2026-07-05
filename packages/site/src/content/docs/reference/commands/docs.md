@@ -57,6 +57,12 @@ council docs extract [options] <panel>
 | --- | --- | --- |
 | `<panel>` | Panel name | — |
 
+**Options**
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--yes` | Skip confirmation prompt (non-interactive runs) | — |
+
 ### council docs doctor
 
 Diagnostic health check for a panel's document pipeline

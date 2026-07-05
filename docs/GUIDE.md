@@ -1196,6 +1196,7 @@ Use `--yes` to skip interactive confirmations in scripts:
 council memory reset my-panel --yes
 council expert delete old-expert --yes
 council panel delete old-panel --yes
+council docs extract my-panel --yes
 ```
 
 ### Composing commands

@@ -263,4 +263,38 @@ describe("council docs extract", () => {
     expect(error).toBeDefined();
     expect((error as { exitCode?: number }).exitCode).toBe(1);
   });
+
+  it("bypasses the prompt and proceeds with extraction when --yes is passed", async () => {
+    const review = scanResult({
+      needsReview: 1,
+      files: [
+        fileDetail({
+          filename: "deck.key",
+          status: "needs-review",
+          detectedFormat: "unknown (extension .key)",
+        }),
+      ],
+    });
+    const { factory, confirm } = confirmProviderReturning(false); // Return false to prove it's bypassed
+    const extractPanel = vi.fn(
+      async (): Promise<PanelScanLookupResult> => ({
+        kind: "scanned",
+        result: scanResult({ indexed: 1 }),
+      }),
+    );
+
+    const { stdout, error } = await runDocs(["extract", "finance", "--yes"], {
+      scanPanel: async () => ({ kind: "scanned", result: review }),
+      loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
+      confirmProvider: factory,
+      extractPanel,
+    });
+
+    expect(error).toBeUndefined();
+    expect(confirm).not.toHaveBeenCalled(); // Prompt bypassed
+    expect(extractPanel).toHaveBeenCalledOnce();
+    expect(extractPanel).toHaveBeenCalledWith("finance");
+    expect(stdout).toContain("deck.key");
+    expect(stdout).toMatch(/1 file.*indexed/i);
+  });
 });
