@@ -658,12 +658,12 @@ council docs doctor <panel>        # document-health diagnostics: indexed count,
 
 ### Document configuration
 
-| Key                                       | Values                   | Default                                                     | Description                                    |
-| ----------------------------------------- | ------------------------ | ----------------------------------------------------------- | ---------------------------------------------- |
-| `documents.maxFileSizeMB`                 | 1–500                    | `50`                                                        | Maximum file size the extractor will read      |
-| `documents.aiExtraction`                  | `off` \| `ask` \| `auto` | `off`                                                       | AI-based fallback for unsupported formats      |
+| Key                                       | Values                   | Default                                                     | Description                                                                                                                                                                                     |
+| ----------------------------------------- | ------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `documents.maxFileSizeMB`                 | 1–500                    | `50`                                                        | Maximum file size the extractor will read                                                                                                                                                       |
+| `documents.aiExtraction`                  | `off` \| `ask` \| `auto` | `off`                                                       | AI-based fallback for unsupported formats                                                                                                                                                       |
 | `documents.aiExtractionAllowedExtensions` | list of extensions       | `[]` (all eligible)                                         | Restrict AI extraction to specific extensions. A non-empty allowlist overrides the extension blocklist for listed extensions, but magic-byte signature blocklist still applies unconditionally. |
-| `expert.supportedFormats`                 | list of extensions       | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept |
+| `expert.supportedFormats`                 | list of extensions       | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept                                                                                                                                                  |
 
 ### Chat configuration
 
@@ -761,7 +761,7 @@ disk if the database is reset.
 council convene <topic>                                        # Auto-compose a panel + start deliberation
 council convene <topic> --template <name>                      # Use a built-in or library panel
 council convene <topic> --no-conclude                          # Skip the default final conclusion synthesis
-council ask <panel> "<question>"                               # One-shot to one expert (default: first; pin with --expert <slug>)
+council ask <panel> "<question>"                               # One-shot to one expert (active session or saved/library panel; pin with --expert <slug>)
 council conclude [panel]                                       # Decision matrix + recommendation
 council conclude [panel] --timeout 90000                      # Custom synthesis timeout (ms)
 council conclude [panel] --model gpt-4.1                       # Override the synthesis model for this run

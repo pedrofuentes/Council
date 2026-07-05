@@ -480,6 +480,8 @@ panel debate:
 
 ```bash
 council ask strategy-review "What are the tradeoffs of event sourcing vs CRUD?"
+# Works with both active sessions and saved/library panels
+council ask code-review "Any security concerns in this diff?"
 ```
 
 Council asks a specific expert from the panel and gives you a focused answer.
@@ -1282,11 +1284,12 @@ Compare these options:
 ```
 
 **General rules:**
-| Character | Bash/Zsh | PowerShell |
-| --------- | ----------------- | ------------------ |
-| `$` | `'...'` or `\$` | `` `$ `` or `'...'` |
-| Backtick | `'...'` or `` \` ``| Already escaped |
-| `"` | `\"` or `'...'` | `` `" `` or `'...'` |
+
+| Character | Bash/Zsh            | PowerShell          |
+| --------- | ------------------- | ------------------- |
+| `$`       | `'...'` or `\$`     | `` `$ `` or `'...'` |
+| Backtick  | `'...'` or `` \` `` | Already escaped     |
+| `"`       | `\"` or `'...'`     | `` `" `` or `'...'` |
 
 **Bulletproof option — `--prompt-file`:** to sidestep shell quoting entirely,
 read the topic/question VERBATIM from a file or stdin. Nothing passes through the
@@ -1505,26 +1508,26 @@ missing `--experts`; other commands fail loudly with `too many arguments`.
 
 Set these with `council config set <key> <value>`:
 
-| Key                                       | Description                                                | Default                                                                                   |
-| ----------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `defaults.model`                          | Default AI model                                           | `claude-sonnet-4.5`                                                                       |
-| `defaults.engine`                         | Default engine                                             | `copilot`                                                                                 |
-| `defaults.maxRounds`                      | Default deliberation rounds                                | `4`                                                                                       |
-| `defaults.maxExperts`                     | Default max experts (auto-compose)                         | `3`                                                                                       |
-| `defaults.maxWordsPerResponse`            | Default soft word budget; structured mode scales per phase | `250`                                                                                     |
-| `documents.aiExtraction`                  | AI-assisted document extraction                            | `off` (`off`, `ask`, `auto`)                                                              |
+| Key                                       | Description                                                                                                                                                                            | Default                                                                                   |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `defaults.model`                          | Default AI model                                                                                                                                                                       | `claude-sonnet-4.5`                                                                       |
+| `defaults.engine`                         | Default engine                                                                                                                                                                         | `copilot`                                                                                 |
+| `defaults.maxRounds`                      | Default deliberation rounds                                                                                                                                                            | `4`                                                                                       |
+| `defaults.maxExperts`                     | Default max experts (auto-compose)                                                                                                                                                     | `3`                                                                                       |
+| `defaults.maxWordsPerResponse`            | Default soft word budget; structured mode scales per phase                                                                                                                             | `250`                                                                                     |
+| `documents.aiExtraction`                  | AI-assisted document extraction                                                                                                                                                        | `off` (`off`, `ask`, `auto`)                                                              |
 | `documents.aiExtractionAllowedExtensions` | Extensions allowed for AI extraction. A non-empty allowlist overrides the extension blocklist for listed extensions, but magic-byte signature blocklist still applies unconditionally. | `[]`                                                                                      |
-| `documents.maxFileSizeMB`                 | Maximum document file size                                 | `50`                                                                                      |
-| `conclude.maxTranscriptChars`             | Max transcript chars for conclusion                        | `50000`                                                                                   |
-| `qualityGate.mode`                        | Anti-sycophancy quality-gate mode (`regenerate` incurs up to `maxRegenerations` extra premium requests per flagged response) | `warn` (`off`, `warn`, `regenerate`)                                                      |
-| `qualityGate.maxRegenerations`            | Max regeneration attempts when mode is `regenerate`        | `1` (0–3)                                                                                 |
-| `expert.recencyHalfLifeDays`              | Document recency half-life                                 | `90`                                                                                      |
-| `expert.supportedFormats`                 | Supported doc formats                                      | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
-| `chat.recentTurnCount`                    | Recent turns to include                                    | `10`                                                                                      |
-| `chat.summaryMaxWords`                    | Summary length limit                                       | `500`                                                                                     |
-| `chat.longConversationWarning`            | Warn on long conversations                                 | `500`                                                                                     |
-| `telemetry.enabled`                       | Enable telemetry                                           | `false`                                                                                   |
-| `paths.dataHome`                          | Data directory path                                        | `~/Council`                                                                               |
+| `documents.maxFileSizeMB`                 | Maximum document file size                                                                                                                                                             | `50`                                                                                      |
+| `conclude.maxTranscriptChars`             | Max transcript chars for conclusion                                                                                                                                                    | `50000`                                                                                   |
+| `qualityGate.mode`                        | Anti-sycophancy quality-gate mode (`regenerate` incurs up to `maxRegenerations` extra premium requests per flagged response)                                                           | `warn` (`off`, `warn`, `regenerate`)                                                      |
+| `qualityGate.maxRegenerations`            | Max regeneration attempts when mode is `regenerate`                                                                                                                                    | `1` (0–3)                                                                                 |
+| `expert.recencyHalfLifeDays`              | Document recency half-life                                                                                                                                                             | `90`                                                                                      |
+| `expert.supportedFormats`                 | Supported doc formats                                                                                                                                                                  | 14 extensions (`md, txt, html, pdf, csv, tsv, rtf, docx, pptx, xlsx, xls, odt, ods, odp`) |
+| `chat.recentTurnCount`                    | Recent turns to include                                                                                                                                                                | `10`                                                                                      |
+| `chat.summaryMaxWords`                    | Summary length limit                                                                                                                                                                   | `500`                                                                                     |
+| `chat.longConversationWarning`            | Warn on long conversations                                                                                                                                                             | `500`                                                                                     |
+| `telemetry.enabled`                       | Enable telemetry                                                                                                                                                                       | `false`                                                                                   |
+| `paths.dataHome`                          | Data directory path                                                                                                                                                                    | `~/Council`                                                                               |
 
 ### Glossary
 

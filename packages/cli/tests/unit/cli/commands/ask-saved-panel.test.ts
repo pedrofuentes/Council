@@ -25,7 +25,6 @@ import { createDatabase } from "../../../../src/memory/db.js";
 import { DebateRepository } from "../../../../src/memory/repositories/debates.js";
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
-import { TurnRepository } from "../../../../src/memory/repositories/turns.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
 
 const SAVED_PANEL_NAME = "saved-advisors";

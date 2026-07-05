@@ -3,7 +3,8 @@
  *
  * One-shot single-expert chat. Picks one expert from an existing panel,
  * runs a 1-round 1-expert debate through the full pipeline via the
- * shared `runWithEngine()` helper.
+ * shared `runWithEngine()` helper. Supports active debate sessions and
+ * saved/library panels (headless fallback).
  */
 import * as path from "node:path";
 
@@ -74,8 +75,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
     )
     .argument(
       "<panel>",
-      "Panel name from a previous debate (as shown by `council sessions`). " +
-        "For library experts, use `council chat`.",
+      "Panel name from a previous debate (as shown by `council sessions`), or a saved/library panel.",
     )
     .argument("[question]", "The question to ask (optional when --prompt-file is used)")
     .option(
