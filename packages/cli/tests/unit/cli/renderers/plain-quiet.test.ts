@@ -121,4 +121,49 @@ describe("PlainRenderer quiet mode", () => {
     expect(text).toContain("Panel assembled");
     expect(text).toContain("(claude-sonnet-4)");
   });
+
+  it("suppresses human-participant roster entry when quiet is true (#2420)", async () => {
+    const sink = new StringSink();
+    const renderer = new PlainRenderer(sink, { color: false, quiet: true });
+    await renderer.render(
+      events(
+        {
+          kind: "panel.assembled",
+          experts: [
+            { slug: "human-user", displayName: "Alice", participantKind: "human" },
+            { slug: "expert", displayName: "Expert", model: "claude-sonnet-4" },
+          ],
+        },
+        { kind: "turn.start", expertSlug: "human-user", round: 0, seq: 0 },
+        { kind: "turn.delta", expertSlug: "human-user", text: "My input." },
+        { kind: "turn.end", expertSlug: "human-user", turnId: "01HZ", content: "My input." },
+      ),
+    );
+    const text = stripAnsi(sink.text);
+    // Roster header and all expert lines (including human participant) suppressed.
+    expect(text).not.toContain("Panel assembled");
+    expect(text).not.toContain("(human)");
+    expect(text).not.toContain("(claude-sonnet-4)");
+    // Turn content and header still rendered, confirming human participant is registered.
+    expect(text).toContain("My input.");
+    expect(text).toContain("[1] Alice");
+  });
+
+  it("shows human-participant roster entry when quiet is false", async () => {
+    const sink = new StringSink();
+    const renderer = new PlainRenderer(sink, { color: false, quiet: false });
+    await renderer.render(
+      events({
+        kind: "panel.assembled",
+        experts: [
+          { slug: "human-user", displayName: "Alice", participantKind: "human" },
+          { slug: "expert", displayName: "Expert", model: "claude-sonnet-4" },
+        ],
+      }),
+    );
+    const text = stripAnsi(sink.text);
+    expect(text).toContain("Panel assembled");
+    expect(text).toContain("(human)");
+    expect(text).toContain("(claude-sonnet-4)");
+  });
 });
