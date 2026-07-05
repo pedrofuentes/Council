@@ -148,7 +148,7 @@ describe("loadTranscript", () => {
 
   it("selects the debate with the most turns by default", async () => {
     const seeded = await seed(dir, { withTurns: false });
-    let substantiveDebateId = "";
+    let substantiveDebateId: string;
     const setupDb = await createDatabase(path.join(dir, "council.db"));
     try {
       const debateRepo = new DebateRepository(setupDb);
@@ -257,8 +257,8 @@ describe("loadTranscript", () => {
     // If the tie-break were reversed (earlier wins), `doc.latestDebate.id` would equal
     // `earlierDebateId` and this test would fail — making the oracle discriminating.
     const seeded = await seed(dir, { withTurns: false });
-    let earlierDebateId = "";
-    let laterDebateId = "";
+    let earlierDebateId: string;
+    let laterDebateId: string;
 
     const setupDb = await createDatabase(path.join(dir, "council.db"));
     try {
@@ -342,7 +342,7 @@ describe("loadTranscript", () => {
 
   it("accepts an explicit debateId override", async () => {
     const seeded = await seed(dir);
-    let explicitDebateId = "";
+    let explicitDebateId: string;
     const setupDb = await createDatabase(path.join(dir, "council.db"));
     try {
       const debateRepo = new DebateRepository(setupDb);
@@ -413,7 +413,7 @@ describe("loadTranscript", () => {
   it("throws when the panel exists but has no debates", async () => {
     // Seed a bare panel with no debate.
     const fresh = await createDatabase(path.join(dir, "council.db"));
-    let panelName = "";
+    let panelName: string;
     try {
       const panel = await new PanelRepository(fresh).create({
         name: "bare-panel",

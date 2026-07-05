@@ -331,7 +331,9 @@ async function runPanelInteractiveLoop(opts: PanelInteractiveLoopOptions): Promi
     | { readonly kind: "debate"; readonly controller: AbortController };
   let state: LoopState = { kind: "idle" };
   let interruptedAtPrompt = false;
-  let interruptedDuringStream = false;
+  // Assigned per streaming turn (reset before each `attempt()`) and by
+  // `onInterrupt`; no declaration initializer needed (no-useless-assignment).
+  let interruptedDuringStream: boolean;
   const onInterrupt = (): void => {
     if (state.kind === "streaming") {
       interruptedDuringStream = true;

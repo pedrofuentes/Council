@@ -54,11 +54,6 @@ export default tseslint.config(
           ],
         },
       ],
-      // eslint 10's updated `eslint:recommended` newly enables no-useless-assignment.
-      // Deferred from the eslint 9->10 bump to keep that a pure, behavior-preserving
-      // tooling change. Adoption is tracked separately:
-      //   no-useless-assignment  -> #1232 (some flagged stores are intentional/defensive)
-      "no-useless-assignment": "off",
     },
   },
   {
