@@ -455,6 +455,60 @@ describe("loadTranscript", () => {
       await fresh2.destroy();
     }
   });
+
+  it("sanitizes panel name containing ANSI/control chars in not-found error", async () => {
+    // A panel name with embedded ANSI escape, newlines, and control chars
+    // must be sanitized to single-line display in the error message.
+    const maliciousName = "panel\x1B[31mRED\x1B[0m\nNewLine\rCarriage\tTab";
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      await expect(async () => {
+        await loadTranscript(fresh, maliciousName);
+      }).rejects.toThrow();
+      // Capture the actual error to verify sanitization
+      try {
+        await loadTranscript(fresh, maliciousName);
+      } catch (error: unknown) {
+        const message = (error as Error).message;
+        // Error message must not contain raw ANSI escapes, newlines, CR, or tabs
+        expect(message).not.toMatch(/\x1B/);
+        expect(message).not.toMatch(/\n/);
+        expect(message).not.toMatch(/\r/);
+        expect(message).not.toMatch(/\t/);
+        // Must contain sanitized single-line version
+        expect(message).toMatch(/panel.*RED.*NewLine.*Carriage.*Tab/);
+      }
+    } finally {
+      await fresh.destroy();
+    }
+  });
+
+  it("sanitizes panel id containing control chars in not-found error (id-branch)", async () => {
+    // When lookup is by panelId and the id contains control chars, the
+    // error must sanitize both panelId and panelName to single-line display.
+    const maliciousId = "01JAXB00\x1B]0;TITLE\x0700";
+    const maliciousName = "name\nwith\nnewlines";
+    const fresh = await createDatabase(path.join(dir, "council.db"));
+    try {
+      await expect(async () => {
+        await loadTranscript(fresh, maliciousName, undefined, maliciousId);
+      }).rejects.toThrow();
+      // Capture the actual error to verify sanitization
+      try {
+        await loadTranscript(fresh, maliciousName, undefined, maliciousId);
+      } catch (error: unknown) {
+        const message = (error as Error).message;
+        // Error message must not contain raw ANSI OSC sequences or newlines
+        expect(message).not.toMatch(/\x1B/);
+        expect(message).not.toMatch(/\n/);
+        // Must contain sanitized versions (OSC stripped, newlines replaced with spaces)
+        expect(message).toMatch(/01JAXB00.*00/);
+        expect(message).toMatch(/name.*with.*newlines/);
+      }
+    } finally {
+      await fresh.destroy();
+    }
+  });
 });
 
 describe("synthesizeEvents", () => {
