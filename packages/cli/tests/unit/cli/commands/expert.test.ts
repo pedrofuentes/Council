@@ -1266,6 +1266,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
       filename: string,
       wordCount: number,
       status: DocumentStatus = "processed",
+      filePathOverride?: string,
     ): Promise<void> {
       const { createDatabase } = await import("../../../../src/memory/db.js");
       const { DocumentRepository } =
@@ -1275,7 +1276,7 @@ fs.writeFileSync(p, body, 'utf-8');`,
       try {
         const docsDir = path.join(env.dataHome, "experts", slug, "docs");
         await fs.mkdir(docsDir, { recursive: true });
-        const filePath = path.join(docsDir, filename);
+        const filePath = filePathOverride ?? path.join(docsDir, filename);
         const repo = new DocumentRepository(db);
         const created = await repo.create({
           expertSlug: slug,
@@ -1636,6 +1637,55 @@ fs.writeFileSync(p, body, 'utf-8');`,
       expect(erred).not.toContain("\x1B");
       expect(erred).not.toContain("\x07");
       expect(erred).not.toContain("\r");
+    });
+
+    it("--remove rejects and persists nothing when the exclusion pattern escapes the docs root (#2464)", async () => {
+      await seedExpert(env, PERSONA);
+      // A relocated/tampered row whose stored realpath sits ABOVE the docs
+      // root: `path.relative(docsRoot, filePath)` yields a `..` traversal that
+      // must NEVER be written into `excludedDocs` (A2 confinement), mirroring
+      // the `docsPath` schema gate.
+      const expertDir = path.join(env.dataHome, "experts", "boss");
+      await fs.mkdir(path.join(expertDir, "docs"), { recursive: true });
+      const realExpertDir = await fs.realpath(expertDir);
+      const escapedPath = path.join(realExpertDir, "escaped.md");
+      await seedDocRow("boss", "escaped.md", 100, "processed", escapedPath);
+
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "escaped.md"]),
+      ).rejects.toThrow(/outside the expert docs root|cannot be safely/i);
+
+      // A clear rejection must reach the terminal error sink.
+      expect(erred).toMatch(/outside the expert docs root/i);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const { DocumentRepository } = await import(
+        "../../../../src/memory/repositories/document-repository.js"
+      );
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        // No escaping pattern may reach the persisted definition.
+        const def = await new FileExpertLibrary(env.dataHome, db).get("boss");
+        const excluded = def?.excludedDocs ?? [];
+        expect(excluded.some((p) => p.includes(".."))).toBe(false);
+        expect(excluded).toHaveLength(0);
+
+        // No partial "removed-but-unexcluded" state: the row is untouched.
+        const rows = await new DocumentRepository(db).findByExpert("boss");
+        expect(rows[0]?.status).not.toBe("removed");
+      } finally {
+        await db.destroy();
+      }
     });
   });
 
