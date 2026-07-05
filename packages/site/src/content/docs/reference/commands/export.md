@@ -17,7 +17,7 @@ council export [options] <panel>
 
 | Argument | Description | Default |
 | --- | --- | --- |
-| `<panel>` | Panel name to export (as shown by \`council sessions\`) | — |
+| `<panel>` | Panel name or ULID (as shown by \`council sessions\`) | — |
 
 ## Options
 

@@ -742,7 +742,7 @@
           {
             "name": "panel",
             "display": "[panel]",
-            "description": "Panel name to resume (as shown by `council sessions`)",
+            "description": "Panel name or ULID (as shown by `council sessions`)",
             "required": false,
             "variadic": false
           }
@@ -2228,7 +2228,7 @@
           {
             "name": "panel",
             "display": "<panel>",
-            "description": "Panel name to export (as shown by `council sessions`)",
+            "description": "Panel name or ULID (as shown by `council sessions`)",
             "required": true,
             "variadic": false
           }
