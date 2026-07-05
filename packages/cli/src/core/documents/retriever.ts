@@ -5,7 +5,7 @@
  * snippets relevant to a user message, supporting retrieval-augmented
  * generation in chat sessions.
  *
- * Ranking &amp; per-document diversity: matching chunks are ranked by FTS5's
+ * Ranking & per-document diversity: matching chunks are ranked by FTS5's
  * built-in BM25 (`rank` aux column, negative — lower is better), then emitted
  * round-robin across their source documents. Each chunk is numbered WITHIN its
  * own document (`doc_rank` via `ROW_NUMBER() OVER (PARTITION BY file_path
