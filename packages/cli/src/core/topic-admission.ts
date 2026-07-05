@@ -164,6 +164,48 @@ const MULTI_SPACE_RESIDUE_PATTERN = /\S {2,}\S/;
 const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/;
 
 /**
+ * Bash currency residue (#2379). Bash expands single-digit positional
+ * parameters, so a double-quoted `$450/mo` arrives as `50/mo` and `$180K`
+ * as `80K` — no surviving `$`, no double space, and the unit suffix is
+ * still attached to digits, so none of the other residue signals fire.
+ *
+ * The residue signature is a bare number carrying a currency-shaped
+ * suffix with no `$` in front:
+ *
+ *   - magnitude: `80K`, `2M`, `1,500K`, `2.5B`
+ *   - per-period rate: `50/mo`, `450/month`, `99/yr`
+ *
+ * The negative lookbehind `(?<![$\d,.])` anchors the match at the true
+ * start of the number and rejects every position inside an intact literal
+ * like `$180K` or `$450/mo`, preserving the currency-literal guarantee
+ * from PR #1022. Longer period alternatives come first so `/month` is
+ * never half-matched as `/mo`.
+ *
+ * A bare number alone is weak evidence — "10K race" and "4K monitor" are
+ * legitimate topics — so these patterns only count as residue when the
+ * topic also mentions money (see {@link MONEY_CONTEXT_PATTERN}). Both
+ * are ARG-ONLY, like every other residue signal.
+ */
+const BARE_MAGNITUDE_RESIDUE_PATTERN = /(?<![$\d,.])\d[\d,]*(?:\.\d+)?[KMB]\b/;
+const BARE_RATE_RESIDUE_PATTERN =
+  /(?<![$\d,.])\d[\d,]*(?:\.\d+)?\/(?:month|mo|year|yr|week|wk|hour|hr|day)s?\b/i;
+
+/**
+ * Money-context gate for the bare magnitude/rate residue signals: only a
+ * topic that is plainly about money makes a bare `80K` or `50/mo` read as
+ * a mangled currency amount rather than a distance, resolution, or count.
+ */
+const MONEY_CONTEXT_PATTERN =
+  /\b(?:budget|cost|price|pricing|revenue|arpu|mrr|arr|salary|salaries|funding|runway|raise|spend|spending|payment|fee|fees|invoice|dollars?|usd)\b/i;
+
+function looksLikeCurrencyResidue(normalized: string): boolean {
+  return (
+    MONEY_CONTEXT_PATTERN.test(normalized) &&
+    (BARE_MAGNITUDE_RESIDUE_PATTERN.test(normalized) || BARE_RATE_RESIDUE_PATTERN.test(normalized))
+  );
+}
+
+/**
  * Exported detection function for the shell expansion warning heuristic.
  * Returns `true` if the topic shows evidence of potential shell expansion
  * issues that warrant a warning to the user.
@@ -184,7 +226,10 @@ const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/;
  *        - empty after trimming (the whole topic expanded away);
  *        - exactly one character (e.g. a lone trailing unit suffix);
  *        - multiple consecutive internal spaces;
- *        - a lone `K`/`M`/`B`/`G` unit suffix after a space.
+ *        - a lone `K`/`M`/`B`/`G` unit suffix after a space;
+ *        - a bare magnitude/rate number (`80K`, `50/mo`) with no `$`, in a
+ *          money-context topic — the bash positional-expansion residue of
+ *          `$180K` / `$450/mo` (#2379).
  *
  * Does NOT warn on intact currency/number literals like `$50`, `$450/mo`,
  * `$180K`, `$2M` where the `$` is followed by 2+ digits — these are intact
@@ -207,7 +252,8 @@ export function detectShellExpansion(topic: string, source: TopicSource = "arg")
     normalized.length === 0 ||
     looksLikeExpansionArtifact(normalized) ||
     MULTI_SPACE_RESIDUE_PATTERN.test(normalized) ||
-    LONE_UNIT_SUFFIX_PATTERN.test(normalized)
+    LONE_UNIT_SUFFIX_PATTERN.test(normalized) ||
+    looksLikeCurrencyResidue(normalized)
   );
 }
 
