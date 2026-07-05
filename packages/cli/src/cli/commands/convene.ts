@@ -152,6 +152,42 @@ export function resolveMaxRounds(
 }
 
 /**
+ * Resolve the effective model for a convene expert using the precedence
+ * flag > per-expert model > template default > config default.
+ *
+ * The `--model` flag is a per-run override the user asked for explicitly, so it
+ * outranks *everything*, including a per-expert declared model. Below the flag
+ * this delegates to {@link resolveModel} for the standard 3-layer hierarchy
+ * (expert > panel default > config default), so empty strings continue to be
+ * treated as "unset" and fall through to the next layer.
+ *
+ * This parallels {@link resolveMaxRounds}: keeping the flag as its own
+ * top-priority argument — rather than folding it into the config-default
+ * fallback — is what lets `--model` override a template's `defaults.model`
+ * instead of being silently outranked by it.
+ *
+ * @param flagModel explicit `--model` value, or `undefined` when the flag was
+ *   not passed on the command line (empty string is treated as unset)
+ * @param expertModel the expert definition's declared `model`, or `undefined`
+ * @param templateDefaultModel the panel template's declared `defaults.model`,
+ *   or `undefined` when the template declares none
+ * @param configDefaultModel the config default (`config.defaults.model`)
+ */
+export function resolveConveneModel(
+  flagModel: string | undefined,
+  expertModel: string | undefined,
+  templateDefaultModel: string | undefined,
+  configDefaultModel: string,
+): string {
+  if (flagModel !== undefined && flagModel.length > 0) return flagModel;
+  return resolveModel({
+    expertModel,
+    panelDefaultModel: templateDefaultModel,
+    configDefaultModel,
+  });
+}
+
+/**
  * Render the post-debate hint that points the user at `council panel save`.
  * The session name is AI-derived and may contain terminal control sequences,
  * so it is sanitized via {@link toSingleLineDisplay} before being written to
@@ -811,12 +847,19 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
           // continues a prior debate's context.
           const memoryBySlug = new Map<string, ExpertMemory>();
 
+          // Model precedence (highest first): the explicit `--model` flag, then
+          // the per-expert declared model, then the template's `defaults.model`,
+          // then the config default. `raw.model` is threaded as its own
+          // top-priority argument — NOT folded into `defaultModel` (which is the
+          // config-default fallback) — so an explicit flag overrides a
+          // template's `defaults.model` instead of being outranked by it.
           const aiExperts = buildExpertSpecs(
             template,
             topic,
             memoryBySlug,
+            raw.model,
             template.defaults?.model,
-            defaultModel,
+            config.defaults.model,
           );
 
           // Build human expert specs from --human flags. A human's identity
@@ -1229,6 +1272,7 @@ function buildExpertSpecs(
   template: ResolvedPanelDefinition,
   topic: string,
   memoryBySlug: ReadonlyMap<string, ExpertMemory>,
+  flagModel: string | undefined,
   panelDefaultModel: string | undefined,
   configDefaultModel: string,
 ): ExpertSpec[] {
@@ -1238,7 +1282,7 @@ function buildExpertSpecs(
       id: ulid(),
       slug: def.slug,
       displayName: def.displayName,
-      model: resolveModel({ expertModel: def.model, panelDefaultModel, configDefaultModel }),
+      model: resolveConveneModel(flagModel, def.model, panelDefaultModel, configDefaultModel),
       systemMessage,
     };
   });
