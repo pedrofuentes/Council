@@ -102,6 +102,12 @@ const RAG_PAYLOADS: readonly {
   { label: "CR overwrite", message: "Corrupt\rINJECT", remnant: "INJECT" },
   { label: "OSC set-title", message: "bad\x1b]0;pwned\x07 suffix", remnant: "suffix" },
   { label: "C1 CSI + bidi", message: "bad\u009b31m\u202eINJECT", remnant: "INJECT" },
+  // LF-only (#2492): a raw newline with NO other control char. The prior oracle
+  // isolated the warning via `capturedError.split("\n")` BEFORE the control-char
+  // check, silently discarding a leaked `\n` (false green). The reworked oracle
+  // slices the warning span and asserts it stays on ONE physical line, so an
+  // un-collapsed LF now trips the check.
+  { label: "LF-only", message: "bad\nINJECT", remnant: "INJECT" },
 ];
 
 describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
@@ -602,6 +608,128 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
     }
   });
 
+  it("surfaces a sanitized warning when success-path ephemeral-panel cleanup fails, and still exits 0 (#2491)", async () => {
+    // #2491 (🟡 · behavioral): on the SUCCESS path the ephemeral one-shot panel
+    // cleanup previously swallowed a delete failure silently
+    // (`.catch(() => undefined)`), leaving the operator no signal that a row
+    // leaked. The fix surfaces a sanitized best-effort warning (mirroring the
+    // RAG-warning sink) while still exiting 0 — the answer was already delivered.
+    await writeSavedPanel();
+
+    // The cleanup delete rejects with a message carrying terminal-injection
+    // vectors (ANSI CSI + a raw LF, remnant AFTER both) so we also prove the
+    // surfaced warning is routed through toSingleLineDisplay.
+    const deleteSpy = vi
+      .spyOn(PanelRepository.prototype, "delete")
+      .mockRejectedValueOnce(new Error("pre\x1b[31m\nINJECT"));
+
+    let out = "";
+    let capturedError = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        out += s;
+      },
+      writeError: (s) => {
+        capturedError += s;
+      },
+    });
+    cmd.exitOverride();
+
+    // Must NOT throw: the answer was delivered, so a cleanup failure is
+    // best-effort and cannot fail the command.
+    await cmd.parseAsync([
+      "node",
+      "council-ask",
+      SAVED_PANEL_NAME,
+      "What is our long-term strategy?",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    // The command still succeeded: exactly one expert turn completed.
+    const events = parseNdjson(out);
+    expect(events.filter((e) => e.kind === "turn.end")).toHaveLength(1);
+
+    // The cleanup delete was attempted exactly once (the ephemeral row) and
+    // rejected — the row leaks, which is precisely why the operator must be told.
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+
+    // A best-effort warning surfaced to stderr — no longer silently swallowed...
+    expect(capturedError).toContain("Ephemeral-panel cleanup failed");
+    // ...with the printable remnant preserved (positive oracle: not over-stripped)...
+    expect(capturedError).toContain("INJECT");
+    // ...and sanitized: no raw ANSI, and the injected LF did not sprawl the
+    // warning across physical lines (marker -> remnant stays on ONE line).
+    expect(capturedError).not.toContain("\x1b[31m");
+    const markerIdx = capturedError.indexOf("Ephemeral-panel cleanup failed");
+    const remnantIdx = capturedError.indexOf("INJECT", markerIdx);
+    const warningSpan = capturedError.slice(markerIdx, remnantIdx + "INJECT".length);
+    expect(warningSpan.split("\n")).toHaveLength(1);
+    expect(warningSpan).not.toMatch(CONTROL_RE);
+
+    deleteSpy.mockRestore();
+  });
+
+  it("keeps swallowing an error-path cleanup failure so the original answer error still propagates (#2491)", async () => {
+    // #2491 companion guard: when runOneExpertAsk itself throws, the finally
+    // cleanup must KEEP swallowing its own delete failure (no success-path
+    // warning) so the ORIGINAL error still propagates unmasked — preserving the
+    // #2487 error-path guarantee. Only the success path gained a warning.
+    await writeSavedPanel();
+
+    // Primary failure: engine construction throws inside runOneExpertAsk.
+    const boomFactory = (): CouncilEngine => {
+      throw new Error("INJECTED_ONESHOT_BOOM: engine init failed");
+    };
+    // Secondary failure: the ephemeral-panel cleanup delete ALSO rejects.
+    const deleteSpy = vi
+      .spyOn(PanelRepository.prototype, "delete")
+      .mockRejectedValueOnce(new Error("CLEANUP_BOOM: delete failed"));
+
+    let capturedError = "";
+    const cmd = buildAskCommand({
+      engineFactory: boomFactory,
+      write: () => undefined,
+      writeError: (s) => {
+        capturedError += s;
+      },
+    });
+    cmd.exitOverride();
+
+    let thrown: unknown;
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        SAVED_PANEL_NAME,
+        "What is our long-term strategy?",
+        "--engine",
+        "mock",
+        "--format",
+        "json",
+      ]);
+    } catch (err) {
+      thrown = err;
+    }
+
+    // The ORIGINAL engine-init error propagates — the cleanup error must NOT
+    // mask or replace it.
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("INJECTED_ONESHOT_BOOM");
+    expect((thrown as Error).message).not.toContain("CLEANUP_BOOM");
+
+    // Cleanup still ran in `finally` (delete attempted once)...
+    expect(deleteSpy).toHaveBeenCalledTimes(1);
+    // ...but on the error path its failure is swallowed, NOT surfaced as the
+    // success-path warning (which would wrongly imply the answer succeeded).
+    expect(capturedError).not.toContain("Ephemeral-panel cleanup failed");
+
+    deleteSpy.mockRestore();
+  });
+
   it.each(RAG_PAYLOADS)(
     "sanitizes control chars in the RAG scan/retrieval warning before writing to stderr ($label)",
     async ({ message, remnant }) => {
@@ -643,14 +771,24 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
       // must not empty or over-strip the message).
       expect(capturedError).toContain(remnant);
 
-      // CRITICAL: the warning line must be free of raw control/ANSI/OSC/CR/C1
-      // sequences. toSingleLineDisplay collapses the message onto one physical
-      // line, so isolate that line and assert it is control-char-free.
-      const warningLine =
-        capturedError
-          .split("\n")
-          .find((l) => l.includes("Reference-document scan/retrieval failed")) ?? "";
-      expect(warningLine).not.toMatch(CONTROL_RE);
+      // CRITICAL (#2492): the warning must be free of raw control/ANSI/OSC/CR/C1
+      // sequences AND must not sprawl across physical lines. The prior oracle
+      // isolated the line with `capturedError.split("\n").find(...)`, which
+      // strips a raw LF *before* the control-char check — an un-collapsed `\n`
+      // in ${msg} would be discarded, passing as a false green. Instead, slice
+      // the warning span (marker -> printable remnant) WITHOUT a prior split and
+      // assert it occupies exactly ONE physical line and carries no control
+      // chars: an un-collapsed LF pushes the remnant onto a second line (span
+      // length 2), and any surviving C0/C1/CR trips CONTROL_RE. Discrimination:
+      // dropping toSingleLineDisplay from the RAG sink turns the LF-only payload
+      // RED here.
+      const markerIdx = capturedError.indexOf("Reference-document scan/retrieval failed");
+      expect(markerIdx).toBeGreaterThanOrEqual(0);
+      const remnantIdx = capturedError.indexOf(remnant, markerIdx);
+      expect(remnantIdx).toBeGreaterThanOrEqual(0);
+      const warningSpan = capturedError.slice(markerIdx, remnantIdx + remnant.length);
+      expect(warningSpan.split("\n")).toHaveLength(1);
+      expect(warningSpan).not.toMatch(CONTROL_RE);
     },
   );
 });
