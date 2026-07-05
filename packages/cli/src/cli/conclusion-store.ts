@@ -15,8 +15,9 @@
  * legacy panels (no `conclusions` key) and corrupt/partial data by
  * returning nothing rather than throwing.
  */
+import { sql } from "kysely";
+
 import type { CouncilDatabase } from "../memory/db.js";
-import { PanelRepository } from "../memory/repositories/panels.js";
 
 import {
   CONCLUSION_SCHEMA_VERSION,
@@ -58,6 +59,11 @@ export function readStoredConclusions(configJson: string): readonly StoredConclu
   for (const value of Object.values(raw as Record<string, unknown>)) {
     const result = StoredConclusionSchema.safeParse(value);
     if (!result.success) continue;
+    // Issue #2412 Item 1: Reject conclusions with version > CONCLUSION_SCHEMA_VERSION
+    // (future/incompatible versions that this CLI version cannot safely interpret).
+    if (result.data.version > CONCLUSION_SCHEMA_VERSION) {
+      continue;
+    }
     // Normalize the zod-inferred output into the readonly ConcludeOutput
     // interface; `warnings` is only carried when actually present so it
     // stays compatible with exactOptionalPropertyTypes.
@@ -120,15 +126,51 @@ export function upsertConclusionInConfig(
  * Persist a synthesized conclusion into a panel's `config_json`, keyed by
  * `output.debateId` (overwriting any prior conclusion for that debate). A
  * no-op if the panel no longer exists.
+ *
+ * Issue #2412 Item 2: Uses SQLite's json_set() to perform the read-modify-write
+ * in a single atomic UPDATE, eliminating the read-then-update race that could
+ * clobber concurrent config_json field writes.
  */
 export async function persistConclusion(
   db: CouncilDatabase,
   panelId: string,
   output: ConcludeOutput,
 ): Promise<void> {
-  const panelRepo = new PanelRepository(db);
-  const panel = await panelRepo.findById(panelId);
-  if (panel === undefined) return;
-  const updated = upsertConclusionInConfig(panel.configJson, output, new Date().toISOString());
-  await panelRepo.update(panelId, { configJson: updated });
+  const stored: StoredConclusion = {
+    version: CONCLUSION_SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
+    output,
+  };
+  const now = new Date().toISOString();
+
+  // Atomic read-modify-write using SQLite's json_set() to merge the new
+  // conclusion into config_json.conclusions[debateId]. This prevents the race
+  // where two concurrent persist calls read stale config_json, merge their
+  // respective conclusions into separate copies, then last-writer-wins clobbers
+  // the first's conclusion. json_set() operates entirely within the UPDATE
+  // statement, so the read+merge+write happens atomically.
+  //
+  // Strategy: use two nested json_set() calls:
+  // 1. Outer: ensure $.conclusions exists (initialize to '{}' if missing).
+  // 2. Inner: write the new conclusion to $.conclusions[debateId].
+  const conclusionsPath = "$.conclusions";
+  const debateKey = `$.conclusions."${output.debateId}"`;
+  const storedJson = JSON.stringify(stored);
+
+  await db
+    .updateTable("panels")
+    .set({
+      config_json: sql<string>`json_set(
+        json_set(
+          config_json,
+          ${conclusionsPath},
+          coalesce(json_extract(config_json, ${conclusionsPath}), json('{}'))
+        ),
+        ${debateKey},
+        json(${storedJson})
+      )`,
+      updated_at: now,
+    })
+    .where("id", "=", panelId)
+    .execute();
 }

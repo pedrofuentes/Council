@@ -113,6 +113,29 @@ describe("readStoredConclusions", () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.output.debateId).toBe("debate-1");
   });
+
+  it("rejects stored conclusions with a version higher than CONCLUSION_SCHEMA_VERSION", () => {
+    const good = upsertConclusionInConfig("{}", makeOutput(), "2024-02-02T00:00:00.000Z");
+    const withFuture = JSON.parse(good) as { conclusions: Record<string, unknown> };
+    // Manually inject a conclusion with version 999 (incompatible future version).
+    withFuture.conclusions["debate-future"] = {
+      version: 999,
+      generatedAt: "2024-03-03T00:00:00.000Z",
+      output: makeOutput({ debateId: "debate-future" }),
+    };
+    const parsed = readStoredConclusions(JSON.stringify(withFuture));
+    // Should have dropped the future-version entry, keeping only the current-version one.
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.output.debateId).toBe("debate-1");
+  });
+
+  it("accepts stored conclusions with the current CONCLUSION_SCHEMA_VERSION", () => {
+    const good = upsertConclusionInConfig("{}", makeOutput(), "2024-02-02T00:00:00.000Z");
+    const parsed = readStoredConclusions(good);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.version).toBe(1);
+    expect(parsed[0]?.output.debateId).toBe("debate-1");
+  });
 });
 
 describe("selectStoredConclusion", () => {
@@ -208,6 +231,43 @@ describe("persistConclusion", () => {
       const all = readStoredConclusions(reloaded.configJson);
       expect(all).toHaveLength(1);
       expect(all[0]?.output.recommendation).toBe("Second");
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("preserves concurrent config_json field writes from separate persist calls (atomic)", async () => {
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panelRepo = new PanelRepository(db);
+      const panel = await panelRepo.create({
+        name: "atomic-persist",
+        topic: "T",
+        copilotHome: path.join(testHome, "copilot"),
+        configJson: JSON.stringify({ template: "code-review", existingKey: "shouldSurvive" }),
+      });
+
+      // Simulate two concurrent conclude operations (different debates) by issuing
+      // back-to-back persist calls. Without atomic config_json read+modify+write,
+      // a race could occur where the second call reads stale config_json that
+      // doesn't include the first's conclusion, causing the first to be lost.
+      await Promise.all([
+        persistConclusion(db, panel.id, makeOutput({ debateId: "debate-A" })),
+        persistConclusion(db, panel.id, makeOutput({ debateId: "debate-B" })),
+      ]);
+
+      const reloaded = await panelRepo.findById(panel.id);
+      if (reloaded === undefined) throw new Error("panel was not reloaded");
+
+      // Both conclusions should exist side by side (neither clobbered).
+      const all = readStoredConclusions(reloaded.configJson);
+      expect(all).toHaveLength(2);
+      const ids = all.map((c) => c.output.debateId).sort();
+      expect(ids).toEqual(["debate-A", "debate-B"]);
+
+      // Existing config key should also survive.
+      const cfg = JSON.parse(reloaded.configJson) as Record<string, unknown>;
+      expect(cfg["existingKey"]).toBe("shouldSurvive");
     } finally {
       await db.destroy();
     }
