@@ -172,7 +172,8 @@ export function formatPrefilledLines(opts: CreateOptions): string {
   // display so a crafted value cannot inject extra ✓ lines or emit terminal
   // escape sequences. Labels are constant and trusted.
   return (
-    provided.map(([label, value]) => `  ✓ ${label}: ${toSingleLineDisplay(value)}\n`).join("") + "\n"
+    provided.map(([label, value]) => `  ✓ ${label}: ${toSingleLineDisplay(value)}\n`).join("") +
+    "\n"
   );
 }
 
@@ -827,12 +828,29 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           // `expert train --retrain` overwrites for every row — `excludedDocs`
           // is read by the training pipeline, so the still-on-disk file is
           // skipped and NOT resurrected on a later retrain.
+          //
+          // #2397: Wrap markRemoved + library.update to maintain atomicity.
+          // If library.update fails, rollback the document status to prevent
+          // inconsistent state (document marked removed but not in excludedDocs).
           await documentRepo.markRemoved(match.id);
           const alreadyExcluded = expert.excludedDocs ?? [];
           const nextExcluded = alreadyExcluded.includes(match.filename)
             ? alreadyExcluded
             : [...alreadyExcluded, match.filename];
-          await library.update(slug, { excludedDocs: nextExcluded });
+          try {
+            await library.update(slug, { excludedDocs: nextExcluded });
+          } catch (err: unknown) {
+            // Rollback: restore document to "processed" status since the
+            // excludedDocs update failed. Surface the original error with
+            // recovery guidance.
+            await documentRepo.updateStatus(match.id, "processed");
+            const detail = err instanceof Error ? err.message : String(err);
+            const msg =
+              `Failed to update expert "${slug}" excludedDocs list: ${detail}\n` +
+              `The document "${target}" was not removed. Retry the operation.`;
+            writeError(msg + "\n");
+            throw new CliUserError(msg);
+          }
           let ftsCleanupFailed = false;
           try {
             await indexer.remove(match.filePath);
@@ -1390,11 +1408,25 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
         // exclusion recorded by `expert docs --remove`, so removal is not a
         // permanent blacklist. Compute the effective exclusion set for this
         // run and persist the pruned set when a re-add cleared an entry.
+        //
+        // #2400: Wrap library.update to provide operational context if the
+        // excludedDocs pruning fails. The documents have already been committed
+        // successfully — this is just metadata cleanup.
         const priorExcluded = expert.excludedDocs ?? [];
         const reAdded = new Set(committedFilenames);
         const excludedDocs = priorExcluded.filter((f) => !reAdded.has(f));
         if (excludedDocs.length !== priorExcluded.length) {
-          await library.update(slug, { excludedDocs });
+          try {
+            await library.update(slug, { excludedDocs });
+          } catch (err: unknown) {
+            const detail = err instanceof Error ? err.message : String(err);
+            const msg =
+              `Failed to update expert "${slug}" excludedDocs list after re-adding documents: ${detail}\n` +
+              `The documents were successfully committed, but the exclusion list could not be pruned.\n` +
+              `Recovery: re-run "council expert train ${slug} --file <path>" for the same file(s) to retry the excludedDocs update.`;
+            writeError(msg + "\n");
+            throw new CliUserError(msg);
+          }
         }
 
         const documentRepo = new DocumentRepository(db);
