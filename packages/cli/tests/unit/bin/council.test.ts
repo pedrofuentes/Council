@@ -289,6 +289,19 @@ describe("buildProgram", () => {
       expect(commandNames[0]).toBe("doctor");
     });
 
+    it("explains that bare council launches the TUI by default on TTY", async () => {
+      const { buildProgram } = await loadCouncilModule();
+      const program = buildProgram();
+      const help = program.helpInformation();
+
+      // Must explicitly state that running bare `council` launches the TUI by default
+      // and mention how to opt out (--no-tui or COUNCIL_NO_TUI env var)
+      expect(help).toMatch(/\blaunch(?:es)?\b.*\btui\b.*\bdefault\b/is);
+      expect(help).toMatch(/\bcouncil ui\b/i);
+      expect(help).toMatch(/--no-tui/);
+      expect(help).toMatch(/COUNCIL_NO_TUI/);
+    });
+
     it("groups commands in correct order", async () => {
       const { buildProgram } = await loadCouncilModule();
       const program = buildProgram();
