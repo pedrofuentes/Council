@@ -15,20 +15,26 @@ import {
   getCouncilHome,
   loadConfig,
   resolveEngine,
+  DEFAULT_MODEL,
   type CouncilConfig,
 } from "../../config/index.js";
+import { PanelNotFoundError } from "../../core/template-loader.js";
+import { buildSystemPrompt } from "../../core/prompt-builder.js";
 import {
-  PanelNotFoundError,
-  TEMPLATE_NAME_PATTERN,
-  loadPanel,
-} from "../../core/template-loader.js";
+  createDocumentRetriever,
+  type DocumentSnippet,
+} from "../../core/documents/retriever.js";
+import {
+  capSnippetsByChars,
+  REFERENCE_DOCS_CHAR_CAP,
+} from "../../core/documents/reference-block.js";
 import {
   checkTopicAdmission,
   detectShellExpansion,
   type TopicSource,
 } from "../../core/topic-admission.js";
 import type { CouncilEngine, ExpertSpec } from "../../engine/index.js";
-import { createDatabase } from "../../memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import { ExpertRepository } from "../../memory/repositories/experts.js";
 import { PanelRepository } from "../../memory/repositories/panels.js";
 import { TurnRepository } from "../../memory/repositories/turns.js";
@@ -214,109 +220,76 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
         const dbPath = path.join(getCouncilHome(), "council.db");
         const db = await createDatabase(dbPath);
         try {
-          const panel = await new PanelRepository(db).findByName(panelName);
-          if (!panel) {
-            const dataHome = process.env["COUNCIL_DATA_HOME"]?.length
-              ? getCouncilDataHome()
-              : getCouncilDataHome(loadedConfig ?? (await getConfig()));
-            const templateOnlyMessage = await buildTemplateOnlyMessage(panelName, dataHome);
-            throw new Error(
-              templateOnlyMessage ??
-                `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
-            );
-          }
-          const allExperts = await new ExpertRepository(db).findByPanelId(panel.id);
-          if (allExperts.length === 0) {
-            throw new Error(
-              `Panel '${panelName}' has no experts. Run \`council convene\` to populate one.`,
-            );
-          }
+          // Active debate session by that name takes precedence — this path is
+          // unchanged (existing `council ask <session-handle>` behavior).
+          const activePanel = await new PanelRepository(db).findByName(panelName);
+          if (activePanel) {
+            const allExperts = await new ExpertRepository(db).findByPanelId(activePanel.id);
+            if (allExperts.length === 0) {
+              throw new Error(
+                `Panel '${panelName}' has no experts. Run \`council convene\` to populate one.`,
+              );
+            }
 
-          const selectedExpert = raw.expert
-            ? allExperts.find((e) => e.slug === raw.expert)
-            : allExperts[0];
+            const selectedExpert = raw.expert
+              ? allExperts.find((e) => e.slug === raw.expert)
+              : allExperts[0];
 
-          if (!selectedExpert) {
-            throw new Error(
-              `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available: ${allExperts.map((e) => e.slug).join(", ")}`,
-            );
-          }
+            if (!selectedExpert) {
+              throw new Error(
+                `No expert found with slug '${raw.expert}' in panel '${panelName}'. Available: ${allExperts.map((e) => e.slug).join(", ")}`,
+              );
+            }
 
-          // selectedExpert.displayName/.slug are LLM-sourced (auto-composed
-          // panels), so sanitize them before every DIRECT terminal sink to stop
-          // ANSI/CR/LF injection from forging or overwriting output. The engine
-          // and persistence layers keep the original values (expertSpec below).
-          const expertDisplayName = toSingleLineDisplay(selectedExpert.displayName);
-          const expertSlugDisplay = toSingleLineDisplay(selectedExpert.slug);
+            const expertSpec: ExpertSpec = {
+              id: selectedExpert.id,
+              slug: selectedExpert.slug,
+              displayName: selectedExpert.displayName,
+              model: selectedExpert.model,
+              systemMessage: selectedExpert.systemMessage,
+            };
 
-          const expertSpec: ExpertSpec = {
-            id: selectedExpert.id,
-            slug: selectedExpert.slug,
-            displayName: selectedExpert.displayName,
-            model: selectedExpert.model,
-            systemMessage: selectedExpert.systemMessage,
-          };
-
-          const setupProgress = createProgress({
-            stream: { write: writeError, isTTY: process.stderr.isTTY },
-            quiet,
-          });
-          setupProgress.start("Preparing answer");
-          let answeredDebateId: string | undefined;
-          try {
-            await runWithEngine({
+            await runOneExpertAsk({
+              db,
               engineKind: resolvedEngine,
               engineFactory: deps.engineFactory,
-              experts: [expertSpec],
-              debateConfig: {
-                maxRounds: 1,
-                maxWordsPerResponse: maxWords,
-                mode: "freeform",
-              },
-              prompt: question,
-              panelId: panel.id,
-              expertSlugToId: { [expertSpec.slug]: expertSpec.id },
-              moderator: "ask-single-expert",
+              expertSpec,
+              panelId: activePanel.id,
+              panelDisplayName: activePanel.name,
+              question,
+              maxWords,
               format,
               write,
               writeError,
               quiet,
-              db,
-              beforeRender: () => {
-                setupProgress.stop();
-              },
-              onDebateComplete: ({ debateId }) => {
-                answeredDebateId = debateId;
-                return Promise.resolve();
-              },
-              preamble: () => {
-                write(`\n# Asking ${expertDisplayName} (${expertSlugDisplay})\n`);
-                write(`Panel: ${panel.name}\n`);
-                write(`Question: ${question}\n\n`);
-              },
             });
-          } finally {
-            setupProgress.stop();
+            return;
           }
 
-          // #194: a single-expert debate reports debate.end reason="completed"
-          // even when the lone expert errored out after retries — so a clean
-          // exit 0 would hide that the user got no answer. The expert produced
-          // an answer iff a turn row was persisted; zero turns means failure.
-          const persistedTurns = answeredDebateId
-            ? await new TurnRepository(db).findByDebateId(answeredDebateId)
-            : [];
-          if (persistedTurns.length === 0) {
-            const message = `${expertDisplayName} (${expertSlugDisplay}) did not respond — no answer was produced. The expert failed; see the error above. Retry, or pick another expert with --expert.`;
-            writeError(message + "\n");
-            throw new CliUserError(message);
-          }
-
-          if (format !== "json" && !quiet) {
-            write(
-              "Tip: Use `council convene --template <panel>` for a full debate, or `council chat <panel>` for conversation.\n",
-            );
-          }
+          // No active session by that name — fall back to the saved/library
+          // panel path so a saved kebab-case panel (or a built-in template such
+          // as `code-review`) can be asked headlessly (F-11). A saved panel's
+          // managed documents are engaged via RAG so a PM can Q&A them without
+          // the interactive (TTY-only) `council chat`.
+          const config = await getConfig();
+          const dataHome = process.env["COUNCIL_DATA_HOME"]?.length
+            ? getCouncilDataHome()
+            : getCouncilDataHome(config);
+          await runSavedPanelAsk({
+            db,
+            panelName,
+            expertSlug: raw.expert,
+            question,
+            maxWords,
+            format,
+            engineKind: resolvedEngine,
+            engineFactory: deps.engineFactory,
+            config,
+            dataHome,
+            write,
+            writeError,
+            quiet,
+          });
         } finally {
           await db.destroy().catch((err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
@@ -346,23 +319,255 @@ Bulletproof option — read the question VERBATIM from a file or stdin (no shell
   return cmd;
 }
 
-async function buildTemplateOnlyMessage(
-  panelName: string,
-  dataHome: string,
-): Promise<string | undefined> {
-  if (!TEMPLATE_NAME_PATTERN.test(panelName)) return undefined;
+interface RunOneExpertAskParams {
+  readonly db: CouncilDatabase;
+  readonly engineKind: EngineKind;
+  readonly engineFactory?: (() => CouncilEngine) | undefined;
+  readonly expertSpec: ExpertSpec;
+  readonly panelId: string;
+  /** Human-facing panel label written in the plain-text preamble. */
+  readonly panelDisplayName: string;
+  readonly question: string;
+  readonly maxWords: number;
+  readonly format: RendererFormat;
+  /** Retrieved RAG snippets (F-11). When non-empty, Debate appends the
+   * shared `[REFERENCE DOCUMENTS]` block to every expert turn. */
+  readonly referenceDocuments?: readonly DocumentSnippet[] | undefined;
+  readonly write: Writer;
+  readonly writeError: Writer;
+  readonly quiet: boolean;
+}
 
+/**
+ * Run a single expert through the 1-round debate pipeline and enforce the
+ * #194 "no answer produced" guard. Shared by both the active-session path
+ * and the saved-panel headless fallback so their engine wiring and
+ * failure handling stay identical.
+ */
+async function runOneExpertAsk(params: RunOneExpertAskParams): Promise<void> {
+  const {
+    db,
+    engineKind,
+    engineFactory,
+    expertSpec,
+    panelId,
+    panelDisplayName,
+    question,
+    maxWords,
+    format,
+    referenceDocuments,
+    write,
+    writeError,
+    quiet,
+  } = params;
+
+  // expertSpec.displayName/.slug can be LLM-sourced (auto-composed panels),
+  // so sanitize them before every DIRECT terminal sink to stop ANSI/CR/LF
+  // injection from forging or overwriting output. The engine and persistence
+  // layers keep the original values (expertSpec).
+  const expertDisplayName = toSingleLineDisplay(expertSpec.displayName);
+  const expertSlugDisplay = toSingleLineDisplay(expertSpec.slug);
+
+  const setupProgress = createProgress({
+    stream: { write: writeError, isTTY: process.stderr.isTTY },
+    quiet,
+  });
+  setupProgress.start("Preparing answer");
+  let answeredDebateId: string | undefined;
   try {
-    await loadPanel(panelName, dataHome);
-    return (
-      `Panel '${panelName}' matches a library template, not an active session. ` +
-      `Use \`council chat ${panelName}\` to talk with it directly, or ` +
-      `\`council convene --template ${panelName}\` to start a new panel.`
+    await runWithEngine({
+      engineKind,
+      engineFactory,
+      experts: [expertSpec],
+      debateConfig: {
+        maxRounds: 1,
+        maxWordsPerResponse: maxWords,
+        mode: "freeform",
+        ...(referenceDocuments !== undefined && referenceDocuments.length > 0
+          ? { referenceDocuments }
+          : {}),
+      },
+      prompt: question,
+      panelId,
+      expertSlugToId: { [expertSpec.slug]: expertSpec.id },
+      moderator: "ask-single-expert",
+      format,
+      write,
+      writeError,
+      quiet,
+      db,
+      beforeRender: () => {
+        setupProgress.stop();
+      },
+      onDebateComplete: ({ debateId }) => {
+        answeredDebateId = debateId;
+        return Promise.resolve();
+      },
+      preamble: () => {
+        write(`\n# Asking ${expertDisplayName} (${expertSlugDisplay})\n`);
+        write(`Panel: ${panelDisplayName}\n`);
+        write(`Question: ${question}\n\n`);
+      },
+    });
+  } finally {
+    setupProgress.stop();
+  }
+
+  // #194: a single-expert debate reports debate.end reason="completed"
+  // even when the lone expert errored out after retries — so a clean
+  // exit 0 would hide that the user got no answer. The expert produced
+  // an answer iff a turn row was persisted; zero turns means failure.
+  const persistedTurns = answeredDebateId
+    ? await new TurnRepository(db).findByDebateId(answeredDebateId)
+    : [];
+  if (persistedTurns.length === 0) {
+    const message = `${expertDisplayName} (${expertSlugDisplay}) did not respond — no answer was produced. The expert failed; see the error above. Retry, or pick another expert with --expert.`;
+    writeError(message + "\n");
+    throw new CliUserError(message);
+  }
+
+  if (format !== "json" && !quiet) {
+    write(
+      "Tip: Use `council convene --template <panel>` for a full debate, or `council chat <panel>` for conversation.\n",
     );
+  }
+}
+
+interface RunSavedPanelAskParams {
+  readonly db: CouncilDatabase;
+  readonly panelName: string;
+  readonly expertSlug: string | undefined;
+  readonly question: string;
+  readonly maxWords: number;
+  readonly format: RendererFormat;
+  readonly engineKind: EngineKind;
+  readonly engineFactory?: (() => CouncilEngine) | undefined;
+  readonly config: CouncilConfig;
+  readonly dataHome: string;
+  readonly write: Writer;
+  readonly writeError: Writer;
+  readonly quiet: boolean;
+}
+
+/**
+ * Headless fallback for `council ask <saved-panel>` (F-11): when no active
+ * debate session matches the name, load the saved/library panel, resolve its
+ * experts, spin up a one-shot runtime panel + expert row (mirroring
+ * `convene`), engage the panel's managed documents via RAG, and answer with a
+ * single expert. Both a saved kebab-case panel and a built-in template resolve
+ * through {@link loadSavedPanelExperts}.
+ */
+async function runSavedPanelAsk(params: RunSavedPanelAskParams): Promise<void> {
+  const {
+    db,
+    panelName,
+    expertSlug,
+    question,
+    maxWords,
+    format,
+    engineKind,
+    engineFactory,
+    config,
+    dataHome,
+    write,
+    writeError,
+    quiet,
+  } = params;
+
+  // The scanner + its extractors are only needed on this less-common path, so
+  // load them lazily — keeping the active-session ask startup lean.
+  const { loadSavedPanelExperts, scanPanelDocuments } = await import("./saved-panel-runtime.js");
+
+  let panel;
+  let resolved;
+  let missing;
+  try {
+    ({ panel, resolved, missing } = await loadSavedPanelExperts(panelName, dataHome, db));
   } catch (err: unknown) {
-    if (err instanceof PanelNotFoundError) return undefined;
+    if (err instanceof PanelNotFoundError) {
+      const message =
+        `No panel found with name '${panelName}'. Run \`council sessions\` to list active ` +
+        `sessions, or \`council panel list\` to see saved panels.`;
+      writeError(message + "\n");
+      throw new CliUserError(message);
+    }
     throw err;
   }
+
+  for (const slug of missing) {
+    writeError(`⚠ Expert "${toSingleLineDisplay(slug)}" not found in library.\n`);
+  }
+  if (resolved.length === 0) {
+    const message = `Panel '${panelName}' has no available experts. Restore the panel's expert files, or recreate it with \`council panel\`.`;
+    writeError(message + "\n");
+    throw new CliUserError(message);
+  }
+
+  const selectedDef = expertSlug ? resolved.find((e) => e.slug === expertSlug) : resolved[0];
+  if (!selectedDef) {
+    const message = `No expert found with slug '${expertSlug}' in panel '${panelName}'. Available: ${resolved
+      .map((e) => e.slug)
+      .join(", ")}`;
+    writeError(message + "\n");
+    throw new CliUserError(message);
+  }
+
+  // One-shot runtime panel + expert row (mirrors convene's persistence) so the
+  // debate has a panel_id and expert_id to attribute turns to.
+  const panelRow = await new PanelRepository(db).create({
+    name: `${panel.name}-${new Date().toISOString().slice(0, 19)}`,
+    topic: question,
+    copilotHome: path.join(getCouncilHome(), "copilot"),
+    configJson: JSON.stringify({ template: panel.name, mode: "freeform", engine: engineKind }),
+  });
+  const systemMessage = buildSystemPrompt(selectedDef, undefined, question);
+  const model = selectedDef.model ?? config.defaults.model ?? DEFAULT_MODEL;
+  const expertRow = await new ExpertRepository(db).create({
+    panelId: panelRow.id,
+    slug: selectedDef.slug,
+    displayName: selectedDef.displayName,
+    model,
+    systemMessage,
+  });
+  const expertSpec: ExpertSpec = {
+    id: expertRow.id,
+    slug: selectedDef.slug,
+    displayName: selectedDef.displayName,
+    model,
+    systemMessage,
+  };
+
+  // Engage docs RAG (F-11): refresh the panel's managed-docs index and retrieve
+  // snippets scoped to this saved panel. Best-effort — a scan/retrieval failure
+  // (or a panel with no docs) must never block the answer.
+  let referenceDocuments: readonly DocumentSnippet[] = [];
+  try {
+    await scanPanelDocuments({ panelName, dataHome, db, config });
+    const snippets = await createDocumentRetriever(db).retrieve(question, {
+      panelName,
+      maxResults: 5,
+    });
+    referenceDocuments = capSnippetsByChars(snippets, REFERENCE_DOCS_CHAR_CAP);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    writeError(`!! Reference-document retrieval failed (continuing without documents): ${msg}\n`);
+  }
+
+  await runOneExpertAsk({
+    db,
+    engineKind,
+    engineFactory,
+    expertSpec,
+    panelId: panelRow.id,
+    panelDisplayName: panel.name,
+    question,
+    maxWords,
+    format,
+    referenceDocuments,
+    write,
+    writeError,
+    quiet,
+  });
 }
 
 function parseFormat(raw: string | undefined): RendererFormat {

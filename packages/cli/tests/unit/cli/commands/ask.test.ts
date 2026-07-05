@@ -134,7 +134,7 @@ describe("buildAskCommand", () => {
     expect(thrown.toLowerCase()).toMatch(/no panel|not found/);
   });
 
-  it("suggests chat or convene when the name matches a library template in the data home", async () => {
+  it("answers a saved library panel headlessly using COUNCIL_DATA_HOME", async () => {
     const originalDataHome = process.env["COUNCIL_DATA_HOME"];
     const libraryHome = path.join(testHome, "library-home");
     const panelsDir = path.join(libraryHome, "panels");
@@ -160,9 +160,13 @@ describe("buildAskCommand", () => {
     process.env["COUNCIL_DATA_HOME"] = libraryHome;
 
     try {
+      let out = "";
       const cmd = buildAskCommand({
         engineFactory: makeMockEngineFactory(),
-        write: () => undefined,
+        write: (s) => {
+          out += s;
+        },
+        writeError: () => undefined,
       });
       cmd.exitOverride();
       let thrown = "";
@@ -174,20 +178,29 @@ describe("buildAskCommand", () => {
           "What?",
           "--engine",
           "mock",
+          "--format",
+          "json",
         ]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }
-      expect(thrown).toMatch(/template-only-panel/);
-      expect(thrown).toMatch(/chat .*template-only-panel/i);
-      expect(thrown).toMatch(/convene --template template-only-panel/i);
+      // T-16b/F-11: a saved library panel is now ANSWERED headlessly (resolving
+      // its data home from COUNCIL_DATA_HOME) instead of being rejected with
+      // chat/convene guidance.
+      expect(thrown).toBe("");
+      const kinds = out
+        .split("\n")
+        .filter((l) => l.trim().startsWith("{"))
+        .map((l) => (JSON.parse(l) as { kind: string }).kind);
+      expect(kinds).toContain("turn.end");
+      expect(kinds.at(-1)).toBe("debate.end");
     } finally {
       if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
       else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
     }
   });
 
-  it("uses config.paths.dataHome for template-aware guidance when --engine is provided", async () => {
+  it("answers a saved library panel headlessly using config.paths.dataHome", async () => {
     const originalDataHome = process.env["COUNCIL_DATA_HOME"];
     const libraryHome = path.join(testHome, "config-data-home");
     const panelsDir = path.join(libraryHome, "panels");
@@ -218,9 +231,13 @@ describe("buildAskCommand", () => {
     );
 
     try {
+      let out = "";
       const cmd = buildAskCommand({
         engineFactory: makeMockEngineFactory(),
-        write: () => undefined,
+        write: (s) => {
+          out += s;
+        },
+        writeError: () => undefined,
       });
       cmd.exitOverride();
       let thrown = "";
@@ -232,13 +249,21 @@ describe("buildAskCommand", () => {
           "What?",
           "--engine",
           "mock",
+          "--format",
+          "json",
         ]);
       } catch (err) {
         thrown = err instanceof Error ? err.message : String(err);
       }
-      expect(thrown).toMatch(/config-template-panel/);
-      expect(thrown).toMatch(/chat .*config-template-panel/i);
-      expect(thrown).toMatch(/convene --template config-template-panel/i);
+      // T-16b/F-11: with COUNCIL_DATA_HOME unset, the saved-panel fallback
+      // resolves the data home from config.paths.dataHome and answers headlessly.
+      expect(thrown).toBe("");
+      const kinds = out
+        .split("\n")
+        .filter((l) => l.trim().startsWith("{"))
+        .map((l) => (JSON.parse(l) as { kind: string }).kind);
+      expect(kinds).toContain("turn.end");
+      expect(kinds.at(-1)).toBe("debate.end");
     } finally {
       if (originalDataHome === undefined) delete process.env["COUNCIL_DATA_HOME"];
       else process.env["COUNCIL_DATA_HOME"] = originalDataHome;
