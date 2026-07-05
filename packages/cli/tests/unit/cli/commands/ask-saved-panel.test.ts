@@ -323,7 +323,7 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
   it("regression: an active debate-session handle is still answered via the active-session path (unchanged)", async () => {
     // Seed a real active-session panel with experts directly in the DB.
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let panelId = "";
+    let panelId: string;
     try {
       const panel = await new PanelRepository(db).create({
         name: "live-session-panel",
