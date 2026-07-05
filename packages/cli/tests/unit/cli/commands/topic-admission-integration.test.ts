@@ -173,6 +173,36 @@ describe("topic admission integration", () => {
     expect(stderr).toMatch(/shell expansion/i);
   });
 
+  it("convene WARNS about shell expansion for bash-mangled currency residue supplied as a shell ARG (#2379)", async () => {
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    // What bash delivers for `convene "ARPU is $450/mo and budget is $180K"`:
+    // the unset positionals $4 and $1 expand to nothing, so Council receives
+    // the topic below — no surviving `$`, no double space.
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "ARPU is 50/mo and budget is 80K",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--yes",
+    ]);
+
+    expect(stderr).toMatch(/shell expansion/i);
+    expect(stderr).toMatch(/--prompt-file/);
+  });
+
   it("ask emits a warning for a sensitive question and still answers", async () => {
     const seed = await seedPanel(testHome);
     let stderr = "";
