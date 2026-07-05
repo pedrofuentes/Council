@@ -451,9 +451,23 @@ describe("checkTopicAdmission", () => {
       ["Κ", "Greek capital kappa"],
       ["κ", "Greek small kappa"],
       ["Μ", "Greek capital mu"],
+      ["μ", "Greek small mu"],
       ["Β", "Greek capital beta"],
+      ["β", "Greek small beta"],
     ])("folds every confusable unit letter when digit-adjacent: 80%s (%s)", (letter) => {
+      const result = checkTopicAdmission(`budget is 80${letter}`, "arg");
+      expect(result.admitted).toBe(true);
+      expect(result.warnings.join(" | ")).toMatch(/shell expansion/i);
       expect(detectShellExpansion(`budget is 80${letter}`, "arg")).toBe(true);
+    });
+
+    it.each([
+      "budget is 80μ",
+      "spend is 50β",
+    ])("warns on Greek lowercase confusable-letter residue: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      expect(result.admitted).toBe(true);
+      expect(result.warnings.join(" | ")).toMatch(/shell expansion/i);
     });
   });
 
@@ -466,6 +480,30 @@ describe("checkTopicAdmission", () => {
    * deterministically by slice position, not wall-clock.
    */
   describe("residue-tier cost bound — oversized args (#2435 Sentinel finding 1)", () => {
+    it("does not manufacture a trailing $1 survivor when truncation bisects $180K", () => {
+      const topic = `${"x".repeat(CATEGORY_SCAN_LIMIT - 3)} $180K should continue after the cap`;
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+      expect(detectShellExpansion(topic, "interactive")).toBe(false);
+      expect(detectShellExpansion(topic, "file")).toBe(false);
+    });
+
+    it("still detects a genuine $1 survivor that appears before the scan limit", () => {
+      const topic = `${"x".repeat(300)} $1 is intentional ${"y".repeat(CATEGORY_SCAN_LIMIT)}`;
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+      expect(detectShellExpansion(topic, "interactive")).toBe(true);
+      expect(detectShellExpansion(topic, "file")).toBe(true);
+    });
+
+    it("keeps no-whitespace oversized tokens from becoming empty after truncation handling", () => {
+      const topic = "x".repeat(CATEGORY_SCAN_LIMIT + 100);
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("does not trim when input length is exactly the scan limit", () => {
+      const topic = `${"x".repeat(CATEGORY_SCAN_LIMIT - 2)}$1`;
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+    });
+
     it("ignores residue that begins after the scan limit", () => {
       const topic = "x".repeat(CATEGORY_SCAN_LIMIT) + " budget is 80K";
       expect(detectShellExpansion(topic, "arg")).toBe(false);
@@ -477,12 +515,12 @@ describe("checkTopicAdmission", () => {
     });
 
     it("handles a token-dense oversized arg without blowing up", () => {
-      // ~26K chars of interleaved keywords and residue tokens where NO pair
-      // is inside the proximity window, so nothing can short-circuit; the
-      // pre-fix cross-product needed minutes for this shape (59s at 18K
-      // chars). The vitest default 5s timeout is the (generous) bound.
       const topic = "usd a b c d 10K e f g h ".repeat(1100);
-      expect(detectShellExpansion(topic, "arg")).toBe(false);
+      const startedAt = performance.now();
+      const expanded = detectShellExpansion(topic, "arg");
+      const elapsedMs = performance.now() - startedAt;
+      expect(expanded).toBe(false);
+      expect(elapsedMs).toBeLessThan(500);
     });
   });
 
