@@ -15,8 +15,9 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as SavedPanelRuntime from "../../../../src/cli/commands/saved-panel-runtime.js";
 import { buildAskCommand } from "../../../../src/cli/commands/ask.js";
 import { setQuiet } from "../../../../src/cli/commands/writer.js";
 import type { CouncilEngine } from "../../../../src/engine/index.js";
@@ -26,6 +27,23 @@ import { DebateRepository } from "../../../../src/memory/repositories/debates.js
 import { ExpertRepository } from "../../../../src/memory/repositories/experts.js";
 import { PanelRepository } from "../../../../src/memory/repositories/panels.js";
 import { copyTemplateDb } from "../../../helpers/template-db.js";
+
+// Hoisted partial mock of the saved-panel runtime module. Every real export
+// (loadSavedPanelExperts, scanPanelDocuments, …) is spread through so the other
+// tests keep exercising the real implementation; only scanPanelDocuments is
+// wrapped in a spy that delegates to the original by default. Individual tests
+// override it with vi.mocked(scanPanelDocuments).mockRejectedValueOnce(...) to
+// drive the best-effort RAG failure branch deterministically.
+vi.mock("../../../../src/cli/commands/saved-panel-runtime.js", async (importOriginal) => {
+  const real = (await importOriginal()) as typeof SavedPanelRuntime;
+  return {
+    ...real,
+    scanPanelDocuments: vi.fn(real.scanPanelDocuments),
+  };
+});
+
+// Static import — vi.mock is hoisted so this resolves to the mocked binding.
+import { scanPanelDocuments } from "../../../../src/cli/commands/saved-panel-runtime.js";
 
 const SAVED_PANEL_NAME = "saved-advisors";
 
@@ -65,6 +83,27 @@ function parseNdjson(stdout: string): ParsedEvent[] {
     .map((l) => JSON.parse(l) as ParsedEvent);
 }
 
+// Every codepoint class a terminal can be induced to (mis)interpret — used to
+// assert the RAG scan/retrieval warning is stripped of ANSI/OSC/C0/C1/CR/bidi
+// sequences before it reaches stderr.
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+// Each payload embeds a distinct terminal-injection vector plus a printable
+// remnant that MUST survive sanitization (positive oracle — guards against an
+// over-eager fix that empties the message).
+const RAG_PAYLOADS: readonly {
+  readonly label: string;
+  readonly message: string;
+  readonly remnant: string;
+}[] = [
+  { label: "ANSI CSI colour", message: "bad\x1b[31mINJECT\x1b[0m", remnant: "INJECT" },
+  { label: "CR + LF", message: "bad\r\nINJECT", remnant: "INJECT" },
+  { label: "CR overwrite", message: "Corrupt\rINJECT", remnant: "INJECT" },
+  { label: "OSC set-title", message: "bad\x1b]0;pwned\x07 suffix", remnant: "suffix" },
+  { label: "C1 CSI + bidi", message: "bad\u009b31m\u202eINJECT", remnant: "INJECT" },
+];
+
 describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
   let testHome: string;
   let dataHome: string;
@@ -72,6 +111,7 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
   let originalDataHome: string | undefined;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     testHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-ask-saved-"));
     dataHome = await fs.mkdtemp(path.join(os.tmpdir(), "council-ask-saved-data-"));
     originalHome = process.env["COUNCIL_HOME"];
@@ -84,6 +124,7 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
   });
 
   afterEach(async () => {
+    vi.clearAllMocks();
     setQuiet(false);
     if (originalHome === undefined) delete process.env["COUNCIL_HOME"];
     else process.env["COUNCIL_HOME"] = originalHome;
@@ -505,4 +546,111 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
     expect(capturedError).toMatch(/normal.*REDTEXT/); // ANSI stripped but text remains
     expect(capturedError).toMatch(/newline injection/); // newline collapsed to space
   });
+
+  it("cleans up the ephemeral one-shot panel row even when the answer path throws (T-2473 · finally)", async () => {
+    // T-2473 (🟡 · security): the ephemeral runtime panel row is created BEFORE
+    // runOneExpertAsk runs. Previously the cleanup delete ran only on the
+    // success path, so an engine/network/DB failure (or Ctrl-C) left the
+    // `panels` row and its cascade children orphaned — accumulating across
+    // repeated failures. The fix wraps the answer call in
+    // `try { … } finally { …delete().catch(() => {}) }` so cleanup always runs
+    // while the original error still propagates.
+    await writeSavedPanel();
+
+    // Force runOneExpertAsk to throw by injecting an engine factory that fails
+    // during engine construction (a realistic engine-init failure). The panel
+    // row exists by this point, so the pre-fix success-only delete is skipped.
+    const boomFactory = (): CouncilEngine => {
+      throw new Error("INJECTED_ONESHOT_BOOM: engine init failed");
+    };
+    const cmd = buildAskCommand({
+      engineFactory: boomFactory,
+      write: () => undefined,
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+
+    let thrown: unknown;
+    try {
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        SAVED_PANEL_NAME,
+        "What is our long-term strategy?",
+        "--engine",
+        "mock",
+        "--format",
+        "json",
+      ]);
+    } catch (err) {
+      thrown = err;
+    }
+
+    // (b) The original error must still propagate — the finally block must NOT
+    // swallow it.
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("INJECTED_ONESHOT_BOOM");
+
+    // (a) No orphan: the ephemeral one-shot panel row must have been deleted on
+    // the error path.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it.each(RAG_PAYLOADS)(
+    "sanitizes control chars in the RAG scan/retrieval warning before writing to stderr ($label)",
+    async ({ message, remnant }) => {
+      // T-2473 (🟢 · security): the best-effort RAG failure warning interpolates
+      // an untrusted ${msg} (a document path / parser error) straight to stderr.
+      // A crafted path or error could smuggle ANSI/OSC/C0/C1/CR sequences into
+      // the terminal. The fix routes msg through toSingleLineDisplay().
+      await writeSavedPanel();
+
+      // Make the RAG scan reject with a malicious message. The failure is
+      // best-effort, so the ask still completes (exit 0) — we only inspect the
+      // warning written to stderr.
+      vi.mocked(scanPanelDocuments).mockRejectedValueOnce(new Error(message));
+
+      let capturedError = "";
+      const cmd = buildAskCommand({
+        engineFactory: makeMockEngineFactory(),
+        write: () => undefined,
+        writeError: (s) => {
+          capturedError += s;
+        },
+      });
+      cmd.exitOverride();
+
+      await cmd.parseAsync([
+        "node",
+        "council-ask",
+        SAVED_PANEL_NAME,
+        "What is our long-term strategy?",
+        "--engine",
+        "mock",
+        "--format",
+        "json",
+      ]);
+
+      // The warning must have been emitted...
+      expect(capturedError).toContain("Reference-document scan/retrieval failed");
+      // ...with the printable remnant preserved (positive oracle: the sanitizer
+      // must not empty or over-strip the message).
+      expect(capturedError).toContain(remnant);
+
+      // CRITICAL: the warning line must be free of raw control/ANSI/OSC/CR/C1
+      // sequences. toSingleLineDisplay collapses the message onto one physical
+      // line, so isolate that line and assert it is control-char-free.
+      const warningLine =
+        capturedError
+          .split("\n")
+          .find((l) => l.includes("Reference-document scan/retrieval failed")) ?? "";
+      expect(warningLine).not.toMatch(CONTROL_RE);
+    },
+  );
 });
