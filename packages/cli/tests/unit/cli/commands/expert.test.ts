@@ -1581,6 +1581,58 @@ fs.writeFileSync(p, body, 'utf-8');`,
       expect(erred).toContain("ORIGINAL_UPDATE_FAILURE");
     });
 
+    it("--remove wraps non-Error failures as real Errors in the AggregateError cause (#2497)", async () => {
+      await seedExpert(env, PERSONA);
+      await seedDocRow("boss", "alpha.md", 100, "processed");
+
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      // Reject with NON-Error values through BOTH the update and the rollback,
+      // so the AggregateError members are built from `unknown`, not real Errors.
+      const updateSpy = vi
+        .spyOn(FileExpertLibrary.prototype, "update")
+        .mockRejectedValue("STRING_UPDATE_FAILURE");
+      const rollbackSpy = vi
+        .spyOn(DocumentRepository.prototype, "updateStatus")
+        .mockRejectedValue("STRING_ROLLBACK_FAILURE");
+
+      let thrown: unknown;
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          () => {
+            /* noop */
+          },
+        );
+        thrown = await cmd
+          .parseAsync(["node", "council-expert", "docs", "boss", "--remove", "alpha.md"])
+          .then(
+            () => undefined,
+            (e: unknown) => e,
+          );
+      } finally {
+        updateSpy.mockRestore();
+        rollbackSpy.mockRestore();
+      }
+
+      // Members must be real Errors with defined messages — never the raw
+      // `unknown` values that `err as Error` would have smuggled through.
+      expect(thrown).toBeInstanceOf(CliUserError);
+      const cause = (thrown as CliUserError).cause;
+      expect(cause).toBeInstanceOf(AggregateError);
+      const members = (cause as AggregateError).errors as unknown[];
+      expect(members).toHaveLength(2);
+      for (const member of members) {
+        expect(member).toBeInstanceOf(Error);
+      }
+      const messages = members.map((m) => (m instanceof Error ? m.message : ""));
+      expect(messages[0]).toContain("STRING_UPDATE_FAILURE");
+      expect(messages[1]).toContain("STRING_ROLLBACK_FAILURE");
+    });
+
     it("--remove sanitizes control/ANSI/OSC sequences in the not-found error (#2464)", async () => {
       await seedExpert(env, PERSONA);
       // No matching doc → hits the not-found branch, which echoes `target`.
@@ -1599,6 +1651,29 @@ fs.writeFileSync(p, body, 'utf-8');`,
       ).rejects.toThrow(/not found/i);
 
       // Raw escape/control bytes must never reach the terminal error stream.
+      expect(erred).not.toContain("\x1B");
+      expect(erred).not.toContain("\x07");
+      expect(erred).not.toContain("\r");
+    });
+
+    it("docs sanitizes control/ANSI/OSC sequences in the not-found expert guard (#2497)", async () => {
+      // The existence guard echoes the raw CLI slug via formatNotFound BEFORE
+      // any validation, so a slug carrying escape sequences must be neutralized.
+      const maliciousSlug = "ghost\x1B[31m\x1B]0;pwn\x07\r\nboss";
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "docs", maliciousSlug]),
+      ).rejects.toThrow(/not found/i);
+
+      // The raw slug must never reach the terminal error stream unsanitized.
       expect(erred).not.toContain("\x1B");
       expect(erred).not.toContain("\x07");
       expect(erred).not.toContain("\r");
@@ -1676,6 +1751,51 @@ fs.writeFileSync(p, body, 'utf-8');`,
         const excluded = def?.excludedDocs ?? [];
         expect(excluded.some((p) => p.includes(".."))).toBe(false);
         expect(excluded).toHaveLength(0);
+
+        // No partial "removed-but-unexcluded" state: the row is untouched.
+        const rows = await new DocumentRepository(db).findByExpert("boss");
+        expect(rows[0]?.status).not.toBe("removed");
+      } finally {
+        await db.destroy();
+      }
+    });
+
+    it("--remove rejects and persists nothing when the resolved path IS the docs root (empty relative) (#2497)", async () => {
+      await seedExpert(env, PERSONA);
+      // A tampered/relocated row whose stored realpath IS the docs root itself:
+      // `path.relative(docsRoot, filePath)` yields "" — a confinement sub-branch
+      // `classifyDocsPath` does NOT catch (it returns null for ""), so the
+      // explicit empty-string guard must reject it, same as the `..` case.
+      const expertDir = path.join(env.dataHome, "experts", "boss");
+      await fs.mkdir(path.join(expertDir, "docs"), { recursive: true });
+      const realDocsRoot = await fs.realpath(path.join(expertDir, "docs"));
+      await seedDocRow("boss", "root.md", 100, "processed", realDocsRoot);
+
+      let erred = "";
+      const cmd = buildExpertCommand(
+        () => {
+          /* noop */
+        },
+        (s) => {
+          erred += s;
+        },
+      );
+      await expect(
+        cmd.parseAsync(["node", "council-expert", "docs", "boss", "--remove", "root.md"]),
+      ).rejects.toThrow(/outside the expert docs root|cannot be safely/i);
+
+      // A clear rejection must reach the terminal error sink.
+      expect(erred).toMatch(/outside the expert docs root/i);
+
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const db = await createDatabase(path.join(env.home, "council.db"));
+      try {
+        // No exclusion pattern may reach the persisted definition.
+        const def = await new FileExpertLibrary(env.dataHome, db).get("boss");
+        expect(def?.excludedDocs ?? []).toHaveLength(0);
 
         // No partial "removed-but-unexcluded" state: the row is untouched.
         const rows = await new DocumentRepository(db).findByExpert("boss");
@@ -2595,6 +2715,60 @@ fs.writeFileSync(p, body, 'utf-8');`,
       // --url — re-running with --file would be wrong for a URL source.
       expect(erred).toContain("--url");
       expect(erred).not.toMatch(/--file\b/);
+    });
+
+    it("re-add sanitizes control/ANSI/OSC sequences in the excludedDocs-update failure (#2497)", async () => {
+      // A prior `docs --remove report.md` recorded the exclusion; re-adding via
+      // --url prunes it, triggering library.update. When that update fails with
+      // an untrusted error string (a YAML/sqlite write error can embed a doc
+      // path), `detail` must be neutralized before it reaches the terminal.
+      await seedExpert(env, { ...PERSONA, excludedDocs: ["report.md"] });
+
+      const fakeFetch = vi.fn(
+        async () =>
+          new Response("Refreshed report.", {
+            status: 200,
+            headers: { "content-type": "text/markdown" },
+          }),
+      );
+      vi.stubGlobal("fetch", fakeFetch);
+
+      const malicious = "boom\x1B[31m\x1B]0;pwn\x07\r\ninjected";
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const updateSpy = vi
+        .spyOn(FileExpertLibrary.prototype, "update")
+        .mockRejectedValue(new Error(malicious));
+
+      let erred = "";
+      try {
+        const cmd = buildExpertCommand(
+          () => {
+            /* noop */
+          },
+          (s) => {
+            erred += s;
+          },
+          { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+        );
+        await expect(
+          cmd.parseAsync([
+            "node",
+            "council-expert",
+            "train",
+            "boss",
+            "--url",
+            "https://example.com/reports/report.md",
+          ]),
+        ).rejects.toThrow(/excludedDocs/i);
+      } finally {
+        updateSpy.mockRestore();
+        vi.unstubAllGlobals();
+      }
+
+      // The untrusted error `detail` must be neutralized before display.
+      expect(erred).not.toContain("\x1B");
+      expect(erred).not.toContain("\x07");
+      expect(erred).not.toContain("\r");
     });
 
     it("does not orphan a --file when a later --url input fails (atomic ingestion, F14)", async () => {
