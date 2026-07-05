@@ -163,15 +163,25 @@ export class PlainRenderer implements Renderer {
     panelIcon: string,
     bullet: string,
   ): void {
-    this.write(`\n${this.bold(`${panelIcon}  Panel assembled:`)}\n`);
+    // The roster block is informational pre-debate setup output — suppress it
+    // under --quiet (F-16), keeping the transcript and conclusion intact.
+    // Expert metadata (display names, colour indices, human flags) is still
+    // registered regardless, because the transcript's turn headers depend on
+    // it even when the roster itself is hidden.
+    const showRoster = !this.#quiet;
+    if (showRoster) {
+      this.write(`\n${this.bold(`${panelIcon}  Panel assembled:`)}\n`);
+    }
     experts.forEach((expert, i) => {
       this.#displayNames.set(expert.slug, expert.displayName);
       this.#expertIndex.set(expert.slug, i);
       const prefix = formatExpertPrefix(i, toSingleLineDisplay(expert.displayName));
       if (expert.participantKind === "human") {
         this.#humanSlugs.add(expert.slug);
-        this.write(`  ${bullet} ${prefix} ${this.gray("(human)")}\n`);
-      } else {
+        if (showRoster) {
+          this.write(`  ${bullet} ${prefix} ${this.gray("(human)")}\n`);
+        }
+      } else if (showRoster) {
         this.write(`  ${bullet} ${prefix} ${this.gray(`(${expert.model})`)}\n`);
       }
     });
