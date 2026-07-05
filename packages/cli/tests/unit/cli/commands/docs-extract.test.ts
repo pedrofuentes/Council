@@ -357,10 +357,29 @@ describe("council docs extract", () => {
     expect(stdout).toContain("testfile.key");
   });
 
-  it("shows --yes flag in help output", async () => {
-    const { stdout } = await runDocs(["extract", "--help"], {});
+  // Issue #2403 item 5: --help flag documentation test.
+  // Note: This test cannot fully validate help output because Commander.js
+  // writes help directly to process.stdout, which bypasses our write() mocks.
+  // Manual verification confirms --yes appears in `council docs extract --help`.
+  it("documents the --yes flag (limitation: cannot capture Commander help output)", async () => {
+    // Attempting to run --help throws Commander's exit override error,
+    // but the option registration happens during command build
+    const cmd = buildDocsCommand(
+      () => {
+        /* noop write */
+      },
+      () => {
+        /* noop writeError */
+      },
+      {},
+    );
 
-    expect(stdout).toContain("--yes");
-    expect(stdout).toMatch(/skip.*confirmation|non-interactive/i);
+    // Verify the extract subcommand exists and has the --yes option
+    const extractCmd = cmd.commands.find((c) => c.name() === "extract");
+    expect(extractCmd).toBeDefined();
+
+    const yesOption = extractCmd?.options.find((o) => o.long === "--yes");
+    expect(yesOption).toBeDefined();
+    expect(yesOption?.description).toMatch(/skip.*confirmation|non-interactive/i);
   });
 });
