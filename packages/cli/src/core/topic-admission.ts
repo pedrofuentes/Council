@@ -225,10 +225,45 @@ const MONEY_CONTEXT_PATTERN =
 const MAX_WORDS_KEYWORD_BEFORE_RESIDUE = 3;
 const MAX_WORDS_KEYWORD_AFTER_RESIDUE = 2;
 
-/** Count whitespace-separated words strictly between two match spans. */
-function wordsBetween(text: string, from: number, to: number): number {
-  const between = text.slice(from, to).trim();
-  return between.length === 0 ? 0 : between.split(/\s+/).length;
+/**
+ * Return whether the trimmed span has at most `max` whitespace-separated words.
+ * Equivalent to `text.slice(from, to).trim().split(/\s+/).length <= max` but
+ * bounded to O(max): stops as soon as the `(max + 1)`th word start is found.
+ */
+function wordsWithin(text: string, from: number, to: number, max: number): boolean {
+  let start = from;
+  while (start < to) {
+    const ch = text[start];
+    if (ch === undefined || !/\s/u.test(ch)) {
+      break;
+    }
+    start += 1;
+  }
+  let end = to;
+  while (end > start) {
+    const ch = text[end - 1];
+    if (ch === undefined || !/\s/u.test(ch)) {
+      break;
+    }
+    end -= 1;
+  }
+  let words = 0;
+  let previousIsWhitespace = true;
+  for (let index = start; index < end; index += 1) {
+    const ch = text[index];
+    if (ch === undefined) {
+      break;
+    }
+    const currentIsWhitespace = /\s/u.test(ch);
+    if (!currentIsWhitespace && previousIsWhitespace) {
+      words += 1;
+      if (words > max) {
+        return false;
+      }
+    }
+    previousIsWhitespace = currentIsWhitespace;
+  }
+  return true;
 }
 
 function looksLikeCurrencyResidue(normalized: string): boolean {
@@ -261,11 +296,19 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
     const after = keywords[lo];
     return (
       (before !== undefined &&
-        wordsBetween(normalized, before.index + before[0].length, residue.index) <=
-          MAX_WORDS_KEYWORD_BEFORE_RESIDUE) ||
+        wordsWithin(
+          normalized,
+          before.index + before[0].length,
+          residue.index,
+          MAX_WORDS_KEYWORD_BEFORE_RESIDUE,
+        )) ||
       (after !== undefined &&
-        wordsBetween(normalized, residue.index + residue[0].length, after.index) <=
-          MAX_WORDS_KEYWORD_AFTER_RESIDUE)
+        wordsWithin(
+          normalized,
+          residue.index + residue[0].length,
+          after.index,
+          MAX_WORDS_KEYWORD_AFTER_RESIDUE,
+        ))
     );
   });
 }
@@ -283,7 +326,7 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
  * Cyrillic topic into lone-unit-suffix "residue" (Sentinel
  * SR-20260705-PR2435-e1d04a45, finding 2).
  */
-const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜΒ]/g;
+const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜμΒβ]/g;
 const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
   "ᴋ": "K",
   "К": "K",
@@ -294,10 +337,12 @@ const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
   "М": "M",
   "м": "M",
   "Μ": "M",
+  "μ": "M",
   "ʙ": "B",
   "В": "B",
   "в": "B",
   "Β": "B",
+  "β": "B",
 };
 
 function foldConfusableUnitLetters(text: string): string {
@@ -341,10 +386,18 @@ function foldConfusableUnitLetters(text: string): string {
  * walks keyword/residue match lists, so the input must be bounded for the
  * cost to stay O(1) in oversized-input terms. Signals that begin only after
  * the cap are sacrificed — same advisory-layer trade-off as
- * {@link boundCategoryScanText}.
+ * {@link boundCategoryScanText}. When truncation happens, the final token in
+ * the bounded slice is dropped before matching (`\S+$`) to avoid treating a
+ * cap-bisected literal (for example `$180K` sliced to `$1`) as a manufactured
+ * survivor signal at the artificial slice edge. If the bounded slice contains
+ * no whitespace (single giant token), it is kept as-is to avoid manufacturing
+ * an empty-topic residue signal.
  */
 export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
-  const normalized = boundCategoryScanText(topic).trim().normalize("NFKC");
+  const bounded = boundCategoryScanText(topic);
+  const boundedForDetection =
+    topic.length > CATEGORY_SCAN_LIMIT && /\s/u.test(bounded) ? bounded.replace(/\S+$/, "") : bounded;
+  const normalized = boundedForDetection.trim().normalize("NFKC");
 
   // Survivor signals — meaningful for every source.
   if (SHELL_VAR_PATTERN.test(normalized) || SHELL_POSITIONAL_PATTERN.test(normalized)) {
