@@ -54,6 +54,7 @@ function runChildProcess<T>(label: string, timeoutMs: number, invoke: () => T): 
       throw new Error(
         `${label} timed out after ${timeoutMs}ms and was killed (${TIMEOUT_KILL_SIGNAL}); ` +
           "the child process likely hung.",
+        { cause: error },
       );
     }
     throw error;

@@ -220,7 +220,7 @@ async function validateAndResolveTarget(
           return { type: "panel", panel: storedPanel };
         }
         const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`${msg} ${legacyPanelRecoveryHint(dbPanel.topic)}`);
+        throw new Error(`${msg} ${legacyPanelRecoveryHint(dbPanel.topic)}`, { cause: err });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

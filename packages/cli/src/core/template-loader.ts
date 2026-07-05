@@ -297,6 +297,7 @@ async function readPanelsDir(dir: string): Promise<string[]> {
       throw new Error(
         `Built-in panels directory not found at ${dir}. This indicates a broken ` +
           `Council installation or packaging bug — reinstall the package to restore the bundled panels.`,
+        { cause: err },
       );
     }
     throw err;
@@ -409,7 +410,7 @@ export async function loadTemplateFromFile(file: string): Promise<PanelDefinitio
     parsed = yaml.parse(raw);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse panel YAML (${file}): ${cause}`);
+    throw new Error(`Failed to parse panel YAML (${file}): ${cause}`, { cause: err });
   }
   const result = PanelDefinitionSchema.safeParse(parsed);
   if (!result.success) {

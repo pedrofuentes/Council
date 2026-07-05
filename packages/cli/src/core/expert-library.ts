@@ -97,7 +97,9 @@ function parseYaml(content: string, filePath?: string): ExpertDefinition {
     const slug = raw && typeof raw === "object" && "slug" in raw
       ? ` (slug: ${(raw as { slug: unknown }).slug})`
       : "";
-    throw new Error(`Expert definition schema validation failed${context}${slug}: ${error}`);
+    throw new Error(`Expert definition schema validation failed${context}${slug}: ${error}`, {
+      cause: error,
+    });
   }
 }
 
@@ -194,7 +196,9 @@ export class FileExpertLibrary implements ExpertLibrary {
     try {
       validated = ExpertDefinitionSchema.parse(def);
     } catch (error) {
-      throw new Error(`Expert definition validation failed for slug "${def.slug}": ${error}`);
+      throw new Error(`Expert definition validation failed for slug "${def.slug}": ${error}`, {
+        cause: error,
+      });
     }
 
     const yamlPath = this.yamlPathFor(validated.slug);
@@ -217,7 +221,7 @@ export class FileExpertLibrary implements ExpertLibrary {
             `[expert-library] Failed to repair missing expert cache row for slug "${displaySlug}" from ${displayPath}: ${displayDetail}`,
           );
         }
-        throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`);
+        throw new Error(`Expert "${validated.slug}" already exists at ${yamlPath}`, { cause: err });
       }
       throw err;
     }
@@ -250,6 +254,7 @@ export class FileExpertLibrary implements ExpertLibrary {
         throw new AggregateError(
           [err as Error, ...restoreErrors],
           `Failed to persist expert "${validated.slug}" metadata and YAML cleanup failed — storage may be inconsistent`,
+          { cause: err },
         );
       }
       throw err;
@@ -305,6 +310,7 @@ export class FileExpertLibrary implements ExpertLibrary {
         throw new AggregateError(
           [err as Error, ...restoreErrors],
           `Failed to update expert "${slug}" and YAML restore failed — storage may be inconsistent`,
+          { cause: err },
         );
       }
       throw err;
@@ -374,6 +380,7 @@ export class FileExpertLibrary implements ExpertLibrary {
           throw new AggregateError(
             [err as Error, ...restoreErrors],
             `Failed to delete expert "${slug}" and rollback partially failed (${restoreErrors.length} restore error(s)) — storage may be inconsistent`,
+            { cause: err },
           );
         }
         throw err;

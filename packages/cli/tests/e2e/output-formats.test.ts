@@ -48,6 +48,7 @@ function parseNdjson<T>(output: string): T[] {
       } catch (err) {
         throw new Error(
           `Failed to parse NDJSON line: ${err instanceof Error ? err.message : String(err)} | Line: ${line.substring(0, 100)}`,
+          { cause: err },
         );
       }
     });

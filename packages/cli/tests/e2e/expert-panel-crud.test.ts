@@ -224,6 +224,7 @@ async function findRuntimePanelByTemplate(
       } catch (err) {
         throw new Error(
           `Malformed config_json for panel ${row.id}: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
         );
       }
     });
