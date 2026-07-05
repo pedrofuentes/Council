@@ -186,7 +186,7 @@ const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/;
  * topic also mentions money (see {@link MONEY_CONTEXT_PATTERN}). Both
  * are ARG-ONLY, like every other residue signal.
  */
-const BARE_MAGNITUDE_RESIDUE_PATTERN = /(?<![$\d,.])\d[\d,]*(?:\.\d+)?[KMB]\b/;
+const BARE_MAGNITUDE_RESIDUE_PATTERN = /(?<![$\d,.])\d[\d,]*(?:\.\d+)?[KMB]\b/i;
 const BARE_RATE_RESIDUE_PATTERN =
   /(?<![$\d,.])\d[\d,]*(?:\.\d+)?\/(?:month|mo|year|yr|week|wk|hour|hr|day)s?\b/i;
 
@@ -194,15 +194,66 @@ const BARE_RATE_RESIDUE_PATTERN =
  * Money-context gate for the bare magnitude/rate residue signals: only a
  * topic that is plainly about money makes a bare `80K` or `50/mo` read as
  * a mangled currency amount rather than a distance, resolution, or count.
+ *
+ * Requires bounded adjacency (#2424): the money keyword must be within a
+ * proximity window of the residue token to avoid false positives like
+ * "4K monitor within our budget" where unrelated tokens co-occur.
  */
 const MONEY_CONTEXT_PATTERN =
   /\b(?:budget|cost|price|pricing|revenue|arpu|mrr|arr|salary|salaries|funding|runway|raise|spend|spending|payment|fee|fees|invoice|dollars?|usd)\b/i;
 
+/**
+ * Maximum character distance between a money keyword and a residue token
+ * for them to be considered adjacent. Allows phrases like "budget of 80K"
+ * (~4 char gap) while rejecting distant unrelated combinations like
+ * "budget-friendly 4K TV" (~10 char gap) or "4K monitor within our budget"
+ * (~20 char gap).
+ */
+const PROXIMITY_WINDOW = 8;
+
 function looksLikeCurrencyResidue(normalized: string): boolean {
-  return (
-    MONEY_CONTEXT_PATTERN.test(normalized) &&
-    (BARE_MAGNITUDE_RESIDUE_PATTERN.test(normalized) || BARE_RATE_RESIDUE_PATTERN.test(normalized))
+  // Quick pre-check: both patterns must exist somewhere in the string.
+  const hasMoney = MONEY_CONTEXT_PATTERN.test(normalized);
+  const hasResidue =
+    BARE_MAGNITUDE_RESIDUE_PATTERN.test(normalized) || BARE_RATE_RESIDUE_PATTERN.test(normalized);
+
+  if (!hasMoney || !hasResidue) {
+    return false;
+  }
+
+  // Find all money-context matches.
+  const moneyMatches = Array.from(normalized.matchAll(new RegExp(MONEY_CONTEXT_PATTERN, "gi")));
+
+  // Find all residue matches (magnitude or rate).
+  const magnitudeMatches = Array.from(
+    normalized.matchAll(new RegExp(BARE_MAGNITUDE_RESIDUE_PATTERN, "gi")),
   );
+  const rateMatches = Array.from(
+    normalized.matchAll(new RegExp(BARE_RATE_RESIDUE_PATTERN, "gi")),
+  );
+  const residueMatches = [...magnitudeMatches, ...rateMatches];
+
+  // Check if any money match is within the proximity window of any residue match.
+  for (const moneyMatch of moneyMatches) {
+    if (moneyMatch.index === undefined) continue;
+    const moneyStart = moneyMatch.index;
+    const moneyEnd = moneyStart + moneyMatch[0].length;
+
+    for (const residueMatch of residueMatches) {
+      if (residueMatch.index === undefined) continue;
+      const residueStart = residueMatch.index;
+      const residueEnd = residueStart + residueMatch[0].length;
+
+      // Calculate minimum distance between the two matches.
+      const distance = Math.max(0, Math.max(residueStart - moneyEnd, moneyStart - residueEnd));
+
+      if (distance <= PROXIMITY_WINDOW) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
