@@ -10,7 +10,11 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { checkTopicAdmission, detectShellExpansion } from "../../../src/core/topic-admission.js";
+import {
+  CATEGORY_SCAN_LIMIT,
+  checkTopicAdmission,
+  detectShellExpansion,
+} from "../../../src/core/topic-admission.js";
 
 describe("checkTopicAdmission", () => {
   describe("benign topics", () => {
@@ -413,6 +417,72 @@ describe("checkTopicAdmission", () => {
     it("keeps the lowercase/confusable signals arg-only", () => {
       expect(detectShellExpansion("We need 80k more budget", "interactive")).toBe(false);
       expect(detectShellExpansion("budget is 80ᴋ", "file")).toBe(false);
+    });
+
+    it.each([
+      // Ordinary Cyrillic topics: the prepositions в/к and В/К/М-initial words
+      // are unit-letter CONFUSABLES, but only digit-adjacent ones may fold —
+      // otherwise every Russian arg topic trips the lone-suffix residue.
+      "Инвестиции в проект",
+      "Стоит ли инвестировать в биткоин",
+      "Поездка в Москву на выходные",
+      "Куда поехать к морю",
+    ])("does NOT warn on a Cyrillic arg topic: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+
+    it("pins the leading-hyphen keyword guard: compound adjectives before the keyword", () => {
+      // "budget" appears only inside "low-budget"; "costs" is not a keyword.
+      expect(detectShellExpansion("low-budget setup costs 80K", "arg")).toBe(false);
+    });
+
+    it.each([
+      ["ᴋ", "small-caps kay"],
+      ["ᴍ", "small-caps em"],
+      ["ʙ", "small-caps bee"],
+      ["К", "Cyrillic capital ka"],
+      ["к", "Cyrillic small ka"],
+      ["М", "Cyrillic capital em"],
+      ["м", "Cyrillic small em"],
+      ["В", "Cyrillic capital ve"],
+      ["в", "Cyrillic small ve"],
+      ["Κ", "Greek capital kappa"],
+      ["κ", "Greek small kappa"],
+      ["Μ", "Greek capital mu"],
+      ["Β", "Greek capital beta"],
+    ])("folds every confusable unit letter when digit-adjacent: 80%s (%s)", (letter) => {
+      expect(detectShellExpansion(`budget is 80${letter}`, "arg")).toBe(true);
+    });
+  });
+
+  /**
+   * Cost bound for the residue tier (Sentinel SR-20260705-PR2435-e1d04a45,
+   * finding 1). `detectShellExpansion` runs on CLI positionals up to
+   * ARG_MAX, twice per convene/ask invocation, so it must stay cheap for
+   * adversarial token-dense input. Like the category scan, it reads only
+   * the first {@link CATEGORY_SCAN_LIMIT} characters — pinned here
+   * deterministically by slice position, not wall-clock.
+   */
+  describe("residue-tier cost bound — oversized args (#2435 Sentinel finding 1)", () => {
+    it("ignores residue that begins after the scan limit", () => {
+      const topic = "x".repeat(CATEGORY_SCAN_LIMIT) + " budget is 80K";
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("still detects residue that sits within the scan limit", () => {
+      const topic = "budget is 80K " + "x".repeat(CATEGORY_SCAN_LIMIT);
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+    });
+
+    it("handles a token-dense oversized arg without blowing up", () => {
+      // ~26K chars of interleaved keywords and residue tokens where NO pair
+      // is inside the proximity window, so nothing can short-circuit; the
+      // pre-fix cross-product needed minutes for this shape (59s at 18K
+      // chars). The vitest default 5s timeout is the (generous) bound.
+      const topic = "usd a b c d 10K e f g h ".repeat(1100);
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
     });
   });
 
