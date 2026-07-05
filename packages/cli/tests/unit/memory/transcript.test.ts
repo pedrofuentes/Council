@@ -471,6 +471,7 @@ describe("loadTranscript", () => {
       } catch (error: unknown) {
         const message = (error as Error).message;
         // Error message must not contain raw ANSI escapes, newlines, CR, or tabs
+        // eslint-disable-next-line no-control-regex
         expect(message).not.toMatch(/\x1B/);
         expect(message).not.toMatch(/\n/);
         expect(message).not.toMatch(/\r/);
@@ -499,6 +500,7 @@ describe("loadTranscript", () => {
       } catch (error: unknown) {
         const message = (error as Error).message;
         // Error message must not contain raw ANSI OSC sequences or newlines
+        // eslint-disable-next-line no-control-regex
         expect(message).not.toMatch(/\x1B/);
         expect(message).not.toMatch(/\n/);
         // Must contain sanitized versions (OSC stripped, newlines replaced with spaces)
