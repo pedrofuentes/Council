@@ -508,6 +508,9 @@ describe.sequential("document intelligence e2e", () => {
     await fs.mkdir(source, { recursive: true });
     await fs.writeFile(path.join(source, "readd.md"), "Re-added content.", "utf-8");
 
+    // Assert on DISTINCTIVE wording from #2400 fix (not just "boss" from filesystem path).
+    // Pre-fix: raw EACCES mentions "boss.yaml" but NOT these operational phrases.
+    // Post-fix: error includes contextual guidance about what succeeded and how to recover.
     await expect(
       runExpertCommand(
         ["train", "boss", "--file", path.join(source, "readd.md"), "--engine", "mock"],
@@ -515,7 +518,7 @@ describe.sequential("document intelligence e2e", () => {
           engineFactory: () => new StubEngine([buildProfileJson("Refreshed.", "Updated.")]),
         },
       ),
-    ).rejects.toThrow(/excludedDocs|boss/i);
+    ).rejects.toThrow(/after re-adding documents.*successfully committed.*exclusion list could not be pruned/is);
 
     // Clean up
     await fs.chmod(yamlPath, 0o644);
