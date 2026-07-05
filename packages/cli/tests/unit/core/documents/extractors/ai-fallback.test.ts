@@ -513,6 +513,92 @@ describe("attemptAiFallback — magic-byte blocklist gate (🔴 fix)", () => {
     await attemptAiFallback(makeCtx(mzBuffer, ".xyz"), AUTO_ANY, { logger });
     expect(messages.some((m) => /blocklist/i.test(m) && /signature/i.test(m))).toBe(true);
   });
+
+  // T-PRM1 (#2392): Extended signature blocklist — defense-in-depth.
+  it("rejects shebang script magic bytes (#! or @echo) even with allowlisted extension", async () => {
+    const shebangBuffer = Buffer.from("#!  /bin/bash\n# script\n");
+    const result1 = await attemptAiFallback(makeCtx(shebangBuffer, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result1).toBeNull();
+
+    const batchBuffer = Buffer.from("@echo off\nREM script\n");
+    const result2 = await attemptAiFallback(makeCtx(batchBuffer, ".doc"), {
+      mode: "auto",
+      allowedExtensions: [".doc"],
+    });
+    expect(result2).toBeNull();
+  });
+
+  it("rejects Mach-O magic bytes (CAFEBABE/FEEDFACE) even with allowlisted extension", async () => {
+    // Mach-O 64-bit binary (0xFEEDFACF is BE, 0xCFFAEDFE is LE)
+    const machoBuffer = Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x07, 0x00, 0x00, 0x01]);
+    const result = await attemptAiFallback(makeCtx(machoBuffer, ".dat"), {
+      mode: "auto",
+      allowedExtensions: [".dat"],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("rejects tar archive magic bytes (ustar) even with allowlisted extension", async () => {
+    // Tar archive signature at offset 257: "ustar\0"
+    const tarBuffer = Buffer.alloc(270, 0);
+    Buffer.from("ustar\0").copy(tarBuffer, 257);
+    const result = await attemptAiFallback(makeCtx(tarBuffer, ".bak"), {
+      mode: "auto",
+      allowedExtensions: [".bak"],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("rejects gzip magic bytes (1F8B) even with allowlisted extension", async () => {
+    const gzipBuffer = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    const result = await attemptAiFallback(makeCtx(gzipBuffer, ".log"), {
+      mode: "auto",
+      allowedExtensions: [".log"],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("rejects SQLite database magic bytes even with allowlisted extension", async () => {
+    const sqliteBuffer = Buffer.from("SQLite format 3\0");
+    const result = await attemptAiFallback(makeCtx(sqliteBuffer, ".data"), {
+      mode: "auto",
+      allowedExtensions: [".data"],
+    });
+    expect(result).toBeNull();
+  });
+
+  it("rejects SVG magic bytes (<svg or <?xml) even with allowlisted extension", async () => {
+    const svgBuffer1 = Buffer.from("<svg width=\"100\" height=\"100\">");
+    const result1 = await attemptAiFallback(makeCtx(svgBuffer1, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result1).toBeNull();
+
+    const svgBuffer2 = Buffer.from("<?xml version=\"1.0\"?>\n<svg>");
+    const result2 = await attemptAiFallback(makeCtx(svgBuffer2, ".xml"), {
+      mode: "auto",
+      allowedExtensions: [".xml"],
+    });
+    expect(result2).toBeNull();
+  });
+
+  it("includes size= in the signature-blocklist rejection log (#2392 item 2)", async () => {
+    const gzipBuffer = Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    const { logger, messages } = captureLogger();
+    await attemptAiFallback(
+      makeCtx(gzipBuffer, ".log"),
+      { mode: "auto", allowedExtensions: [".log"] },
+      { logger },
+    );
+    const rejectLog = messages.find((m) => /blocklist.*signature/i.test(m));
+    expect(rejectLog).toBeDefined();
+    expect(rejectLog).toContain("size=");
+    expect(rejectLog).toContain("size=8");
+  });
 });
 
 describe("attemptAiFallback — error resilience (#985)", () => {
