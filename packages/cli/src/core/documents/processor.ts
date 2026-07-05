@@ -29,7 +29,7 @@ import * as fs from "node:fs/promises";
 import type { Stats } from "node:fs";
 import * as path from "node:path";
 
-import { detectDocumentChanges } from "./detector.js";
+import { detectDocumentChanges, type DetectionResult } from "./detector.js";
 import { extractDocument, type AiFallbackOption } from "./extractor.js";
 import {
   analyzeDocuments,
@@ -140,6 +140,17 @@ export interface DocumentProcessorOptions {
    * are non-configurable on V8).
    */
   readonly _detectorLstatOverride?: (p: string) => Promise<Stats>;
+  /**
+   * Filenames (basenames) the caller has explicitly un-indexed via
+   * `council expert docs <slug> --remove <file>` (persisted in the expert
+   * definition's `excludedDocs`). Any on-disk document whose basename is
+   * in this set is treated as absent by both {@link DocumentProcessor.process}
+   * and {@link DocumentProcessor.needsProcessing}: it is never (re)extracted,
+   * (re)indexed, or tracked. This is what keeps a removed document from being
+   * resurrected on `expert train --retrain` (which otherwise reclassifies the
+   * still-on-disk file as new). Empty/omitted means no exclusions.
+   */
+  readonly excludedDocs?: readonly string[];
 }
 
 /**
@@ -170,6 +181,29 @@ export function createDocumentProcessor(
 ): DocumentProcessor {
   const { engine, documentRepo, profileRepo, indexer, config } = options;
   const detectorLstatOverride = options._detectorLstatOverride;
+  // Basenames explicitly un-indexed via `expert docs --remove`. Frozen at
+  // factory time; both `process` and `needsProcessing` treat matching
+  // on-disk files as absent so a removed document is not resurrected.
+  const excludedBasenames = new Set(options.excludedDocs ?? []);
+  const isExcludedPath = (absPath: string): boolean =>
+    excludedBasenames.size > 0 && excludedBasenames.has(path.basename(absPath));
+
+  /**
+   * Drop any detected file whose basename is in the exclusion set from the
+   * new/modified/unchanged buckets, so downstream processing, indexing, and
+   * deletion reconciliation all behave as if the file were not on disk.
+   * Rejected/unknown/unsupported buckets are left untouched — they carry
+   * their own retention semantics.
+   */
+  function applyExclusions(detection: DetectionResult): DetectionResult {
+    if (excludedBasenames.size === 0) return detection;
+    return {
+      ...detection,
+      newFiles: detection.newFiles.filter((f) => !isExcludedPath(f.path)),
+      modifiedFiles: detection.modifiedFiles.filter((f) => !isExcludedPath(f.path)),
+      unchangedFiles: detection.unchangedFiles.filter((f) => !isExcludedPath(f.path)),
+    };
+  }
 
   /**
    * Resolve and freeze the docs root's canonical identity ONCE at entry.
@@ -202,11 +236,13 @@ export function createDocumentProcessor(
       const rootCanonical = await resolveRealRoot(docsPath);
       if (rootCanonical === null) return false;
       const known = await documentRepo.getChecksumMap(expertSlug);
-      const detection = await detectDocumentChanges(
-        rootCanonical,
-        known,
-        config.supportedFormats,
-        { confinementRoot: rootCanonical, _rootIsCanonical: true },
+      const detection = applyExclusions(
+        await detectDocumentChanges(
+          rootCanonical,
+          known,
+          config.supportedFormats,
+          { confinementRoot: rootCanonical, _rootIsCanonical: true },
+        ),
       );
       if (detection.newFiles.length > 0 || detection.modifiedFiles.length > 0) {
         return true;
@@ -236,7 +272,7 @@ export function createDocumentProcessor(
     ): Promise<ProcessingResult> {
       const rootCanonical = await resolveRealRoot(docsPath);
       const known = await documentRepo.getChecksumMap(expertSlug);
-      const detection =
+      const detection = applyExclusions(
         rootCanonical === null
           ? {
               newFiles: [],
@@ -258,7 +294,8 @@ export function createDocumentProcessor(
                   ? { _lstatOverride: detectorLstatOverride }
                   : {}),
               },
-            );
+            ),
+      );
 
       const toProcess = [...detection.newFiles, ...detection.modifiedFiles];
       const newSet = new Set(detection.newFiles.map((f) => f.path));

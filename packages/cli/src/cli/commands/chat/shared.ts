@@ -769,6 +769,10 @@ export async function maybeProcessPersonaDocs(
     documentRepo,
     profileRepo,
     indexer,
+    // Honor documents un-indexed via `expert docs --remove` so chat startup
+    // does not re-index a removed file that is still on disk (parity with
+    // `expert train`).
+    ...(expert.excludedDocs !== undefined ? { excludedDocs: expert.excludedDocs } : {}),
     config: {
       supportedFormats: config.expert.supportedFormats,
       recencyHalfLifeDays: config.expert.recencyHalfLifeDays,
