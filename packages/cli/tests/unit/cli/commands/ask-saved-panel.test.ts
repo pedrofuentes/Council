@@ -153,15 +153,12 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
     expect(turnEnds).toHaveLength(1); // exactly ONE expert answered
     expect(kinds[kinds.length - 1]).toBe("debate.end");
 
-    // A debate + turn row should be persisted under a freshly-created panel.
+    // T-PR16 .3: The one-shot panel row is now cleaned up after ask completes,
+    // so no panel should persist. Debates/turns are cascade-deleted.
     const db = await createDatabase(path.join(testHome, "council.db"));
     try {
-      const created = (await new PanelRepository(db).findByNamePrefix(SAVED_PANEL_NAME))[0];
-      expect(created).toBeDefined();
-      const debates = await new DebateRepository(db).findByPanelId(created?.id ?? "");
-      expect(debates).toHaveLength(1);
-      const turns = await new TurnRepository(db).findByDebateId(debates[0]?.id ?? "");
-      expect(turns).toHaveLength(1);
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(0);
     } finally {
       await db.destroy();
     }
