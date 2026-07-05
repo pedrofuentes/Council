@@ -409,6 +409,28 @@ describe("CopilotEngine — send() event translation", () => {
     expect(complete).toBeDefined();
   });
 
+  it("does not duplicate content when the SDK streams deltas AND fires a terminal assistant.message", async () => {
+    const engine = new CopilotEngine();
+    await engine.start();
+    await engine.addExpert(expertA);
+    // Real Copilot streaming emits incremental `assistant.message_delta`
+    // chunks AND a terminal `assistant.message` carrying the FULL assembled
+    // content. The adapter must treat the terminal message as a fallback used
+    // ONLY when nothing streamed — otherwise it re-emits the whole response as
+    // an extra delta and downstream accumulation doubles it
+    // ("Falcon DriftFalcon Drift"). See T-07 / F-01.
+    mockState.sendQueues.set("session-0", [
+      { kind: "assistant.message_delta", data: { deltaContent: "Falcon " } },
+      { kind: "assistant.message_delta", data: { deltaContent: "Drift" } },
+      { kind: "assistant.message", data: { content: "Falcon Drift" } },
+    ]);
+    const events = await collect(engine.send({ prompt: "hi", expertId: expertA.id }));
+    const deltas = events.filter(
+      (e): e is Extract<EngineEvent, { kind: "message.delta" }> => e.kind === "message.delta",
+    );
+    expect(deltas.map((d) => d.text).join("")).toBe("Falcon Drift");
+  });
+
   it("throws synchronously on send() to unknown expert", async () => {
     const engine = new CopilotEngine();
     await engine.start();
