@@ -821,24 +821,53 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
             throw new CliUserError(msg);
           }
 
-          // Compute the docs root to create a relative path exclusion (#2399)
+          // Compute the docs root IDENTICALLY to the training pipeline's
+          // match-time root so the stored exclusion pattern equals the pattern
+          // the processor derives when it later re-scans this file (#2399,
+          // #2467). Two rules must mirror the pipeline exactly, or path-scoped
+          // exclusion silently no-ops and the removed document is re-indexed on
+          // the next `train`:
+          //   1. The pipeline (`expert train`, chat startup, TUI training)
+          //      ALWAYS scans `<expertDir>/docs` and does NOT honor
+          //      `expert.docsPath`, so the root is hardcoded here too — using
+          //      `docsPath` would compute a pattern against a root no scan uses.
+          //   2. The processor canonicalizes that root with `fs.realpath`
+          //      (see processor.ts `resolveRealRoot`) and stores each file's
+          //      realpath, so we canonicalize too — otherwise an intermediate
+          //      symlink in the data path (e.g. macOS `/var`→`/private/var`)
+          //      makes the stored relative path diverge from the match-time one.
           const expertDir = path.join(dataHome, "experts", slug);
-          const docsRoot = expert.docsPath
-            ? path.join(expertDir, expert.docsPath)
-            : path.join(expertDir, "docs");
+          const docsRootRaw = path.join(expertDir, "docs");
+          let docsRoot: string;
+          try {
+            docsRoot = await fs.realpath(docsRootRaw);
+          } catch (err: unknown) {
+            // Docs root not yet materialized on disk: fall back to the literal
+            // path. The pipeline treats a missing root as "no documents", so no
+            // file can be re-indexed regardless of the stored pattern.
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+              docsRoot = docsRootRaw;
+            } else {
+              throw err;
+            }
+          }
 
-          // Compute relative path from docs root for precise exclusion.
-          // Normalize to forward slashes for cross-platform consistency (#2399).
+          // Compute relative path from the canonical docs root for precise
+          // exclusion. Normalize to forward slashes for cross-platform
+          // consistency (#2399).
           const relativePath = path.relative(docsRoot, match.filePath).split(path.sep).join("/");
 
           // DB row is the source of truth for "is this document active?".
           // Mark it removed FIRST so a mid-operation failure never leaves an
           // indexed-but-untracked file. The removal is then made durable by
-          // recording the relative path in the expert definition's `excludedDocs`
-          // (below): unlike the `expert_documents` "removed" status — which
-          // `expert train --retrain` overwrites for every row — `excludedDocs`
-          // is read by the training pipeline, so the still-on-disk file is
-          // skipped and NOT resurrected on a later retrain.
+          // recording the pipeline-relative path in the expert definition's
+          // `excludedDocs` (below): unlike the `expert_documents` "removed"
+          // status — which `expert train --retrain` overwrites for every row —
+          // `excludedDocs` is read by the training pipeline. Because the pattern
+          // is computed against the pipeline's own (realpath'd, `docs`-rooted)
+          // scan root, it matches the file at retrain time — for default AND
+          // custom-`docsPath` experts and under symlinked data paths — so the
+          // still-on-disk file is skipped and NOT resurrected (#2467).
           //
           // #2397: Wrap markRemoved + library.update to maintain atomicity.
           // If library.update fails, rollback the document status to prevent
