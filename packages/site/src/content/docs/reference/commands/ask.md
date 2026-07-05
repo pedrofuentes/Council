@@ -17,7 +17,7 @@ council ask [options] <panel> [question]
 
 | Argument | Description | Default |
 | --- | --- | --- |
-| `<panel>` | Panel name from a previous debate (as shown by \`council sessions\`). For library experts, use \`council chat\`. | — |
+| `<panel>` | Panel name from a previous debate (as shown by \`council sessions\`), or a saved/library panel. | — |
 | `[question]` | The question to ask (optional when --prompt-file is used) | — |
 
 ## Options

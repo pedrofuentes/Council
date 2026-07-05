@@ -1023,7 +1023,7 @@
           {
             "name": "panel",
             "display": "<panel>",
-            "description": "Panel name from a previous debate (as shown by `council sessions`). For library experts, use `council chat`.",
+            "description": "Panel name from a previous debate (as shown by `council sessions`), or a saved/library panel.",
             "required": true,
             "variadic": false
           },

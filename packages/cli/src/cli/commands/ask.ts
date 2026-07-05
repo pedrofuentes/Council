@@ -3,7 +3,8 @@
  *
  * One-shot single-expert chat. Picks one expert from an existing panel,
  * runs a 1-round 1-expert debate through the full pipeline via the
- * shared `runWithEngine()` helper.
+ * shared `runWithEngine()` helper. Supports active debate sessions and
+ * saved/library panels (headless fallback).
  */
 import * as path from "node:path";
 
@@ -74,8 +75,7 @@ export function buildAskCommand(deps: AskCommandDeps = {}): Command {
     )
     .argument(
       "<panel>",
-      "Panel name from a previous debate (as shown by `council sessions`). " +
-        "For library experts, use `council chat`.",
+      "Panel name from a previous debate (as shown by `council sessions`), or a saved/library panel.",
     )
     .argument("[question]", "The question to ask (optional when --prompt-file is used)")
     .option(
@@ -547,7 +547,9 @@ async function runSavedPanelAsk(params: RunSavedPanelAskParams): Promise<void> {
     referenceDocuments = capSnippetsByChars(snippets, REFERENCE_DOCS_CHAR_CAP);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    writeError(`!! Reference-document retrieval failed (continuing without documents): ${msg}\n`);
+    writeError(
+      `!! Reference-document scan/retrieval failed (continuing without documents): ${msg}\n`,
+    );
   }
 
   await runOneExpertAsk({
@@ -565,6 +567,11 @@ async function runSavedPanelAsk(params: RunSavedPanelAskParams): Promise<void> {
     writeError,
     quiet,
   });
+
+  // Clean up the ephemeral one-shot panel row (T-PR16 .3 from #2430): the row
+  // was created for debate attribution but should not persist in the roster.
+  // Cascade delete removes the expert row and any turns/debates.
+  await new PanelRepository(db).delete(panelRow.id);
 }
 
 function parseFormat(raw: string | undefined): RendererFormat {
