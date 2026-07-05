@@ -218,78 +218,120 @@ describe("stripToolMarkup — preserves legitimate angle-bracket content", () =>
   });
 });
 
-describe("stripToolMarkup — adversarial input protection (ReDoS defense)", () => {
+describe("stripToolMarkup — adversarial input protection (ReDoS defense, #2413)", () => {
   /**
-   * The length cap policy: stripToolMarkup will sanitize up to MAX_INPUT_LENGTH
-   * bytes (100KB). If the input exceeds this limit, the function sanitizes only
-   * the allowed prefix and appends a truncation notice so users are aware that
-   * content was capped. This prevents super-linear regex behavior from blocking
-   * the event loop on adversarial model output.
+   * #2413 remediation. `stripToolMarkup` sanitizes the FULL input in linear
+   * time: there is NO input-length cap and NO truncation, so tool markup can
+   * never survive by being cut at a boundary. These tests exercise both
+   * documented super-linear vectors — a long horizontal-whitespace run NOT
+   * terminated by a newline, and many unmatched tool tags — plus the former
+   * truncate-before-sanitize bypass. Oracles assert output CORRECTNESS; a
+   * modest per-test timeout (not an in-test wall-clock assertion) is the guard
+   * against a super-linear hang, which is deterministic and CI-load tolerant.
    */
-  const MAX_INPUT_LENGTH = 100_000; // 100KB
+  const REDOS_TIMEOUT_MS = 2_000;
 
-  it("caps input length at 100KB and appends a truncation notice", () => {
-    // 120KB of legitimate prose + tool markup (exceeds the 100KB cap)
-    const hugeProseChunk = "x".repeat(60_000);
-    const toolBlock = open("invoke", ' name="Skill"') + "inner content" + close("invoke");
-    const moreProseChunk = "y".repeat(60_000);
-    const oversizedInput = hugeProseChunk + toolBlock + moreProseChunk;
-    expect(oversizedInput.length).toBeGreaterThan(MAX_INPUT_LENGTH);
+  it(
+    "fully sanitizes oversized input without truncating or emitting a notice",
+    () => {
+      // ~200KB of prose wrapping a tool block — well beyond the former 100KB
+      // cap. The whole input is sanitized; nothing is dropped or truncated.
+      const input =
+        "x".repeat(100_000) +
+        open("invoke", ' name="Skill"') +
+        "inner-secret" +
+        close("invoke") +
+        "y".repeat(100_000);
 
-    const result = stripToolMarkup(oversizedInput);
+      const result = stripToolMarkup(input);
 
-    // The result should be bounded to approximately the cap
-    expect(result.length).toBeLessThanOrEqual(MAX_INPUT_LENGTH + 200); // allow for truncation notice
-    // The truncation notice should be present
-    expect(result).toMatch(/\[content truncated.*exceeded.*limit\]/i);
-    // The result should contain the start of the input
-    expect(result.startsWith("x")).toBe(true);
-  });
+      expect(result).not.toMatch(/<\/?invoke/);
+      expect(result).not.toContain("inner-secret");
+      // No cap ⇒ no truncation and no sanitizer metadata injected into prose.
+      expect(result).not.toMatch(/truncat/i);
+      expect(result.startsWith("x")).toBe(true);
+      expect(result.endsWith("y")).toBe(true);
+    },
+    REDOS_TIMEOUT_MS,
+  );
 
-  it("handles 80KB of trailing whitespace without super-linear behavior", () => {
-    // This pattern triggers catastrophic backtracking in the old `[ \t]+\n` regex
-    const adversarialWhitespace =
-      "Prose content. " +
-      open("invoke", ' name="Skill"') +
-      "parameter" +
-      close("invoke") +
-      " ".repeat(80_000) + // 80KB of spaces
-      "\n" +
-      "More prose.";
+  it(
+    "closes the truncate-before-sanitize bypass at the former cap boundary",
+    () => {
+      // A tool block straddles the old 100,000-char slice point: the open tag
+      // is cut mid-token, and its close tag + inner payload sit beyond the cut.
+      // The rejected implementation leaked a `<invoke na` fragment (no closing
+      // `>`, so neither strip regex matched) and dropped the inner payload; the
+      // linear sanitizer strips the entire block instead.
+      const input =
+        "z".repeat(99_990) +
+        '<invoke name="Skill">secret-inner</invoke>' +
+        "y".repeat(2_000);
 
-    // The function should complete in reasonable time and produce correct output
-    const start = Date.now();
-    const result = stripToolMarkup(adversarialWhitespace);
-    const elapsed = Date.now() - start;
+      const result = stripToolMarkup(input);
 
-    // Should complete in well under 1 second (generous bound to avoid flakiness)
-    expect(elapsed).toBeLessThan(500);
+      expect(result).not.toContain("<invoke");
+      expect(result).not.toMatch(/<\/?invoke/);
+      expect(result).not.toContain("secret-inner");
+      expect(result).toContain("z");
+      expect(result).toContain("y");
+    },
+    REDOS_TIMEOUT_MS,
+  );
 
-    // Correctness: tool markup removed, whitespace tidied
-    expect(result).not.toContain("invoke");
-    expect(result).toContain("Prose content.");
-    expect(result).toContain("More prose.");
-    // The trailing whitespace should be collapsed
-    expect(result).not.toMatch(/ {100,}/); // no long runs of spaces
-  });
+  it(
+    "strips tool markup before a long non-newline-terminated whitespace run (under former cap)",
+    () => {
+      // The `[ \t]+$` vector: a long space run NOT followed by a newline (so the
+      // end-anchor fails and a global multiline regex backtracks quadratically).
+      // A tool tag is present so the whitespace-tidy path runs; the total stays
+      // under the former 100KB cap, so no truncation is involved. The rejected
+      // `/[ \t]+$/gm` implementation hangs ~12s here and trips the timeout.
+      const input = open("skill") + close("skill") + " ".repeat(99_000) + "x";
 
-  it("handles 500+ unmatched invoke tags without catastrophic re-scanning", () => {
-    // Many unmatched opening tags can trigger super-linear behavior in global
-    // lazy paired-block matching (the regex engine re-scans repeatedly)
-    const unmatched = open("invoke", ' name="Skill"');
-    const adversarialTags = unmatched.repeat(500) + " Legitimate prose at the end.";
+      const result = stripToolMarkup(input);
 
-    const start = Date.now();
-    const result = stripToolMarkup(adversarialTags);
-    const elapsed = Date.now() - start;
+      expect(result).not.toMatch(/<\/?skill>/);
+      expect(result).toBe("x"); // tags removed, surrounding whitespace tidied
+    },
+    REDOS_TIMEOUT_MS,
+  );
 
-    // Should complete in well under 1 second
-    expect(elapsed).toBeLessThan(500);
+  it(
+    "strips tool markup before a long non-newline-terminated whitespace run (beyond former cap)",
+    () => {
+      // Same `[ \t]+$` vector on the former truncation path (>100KB). With no
+      // cap the entire input is sanitized: no truncation notice, no hang.
+      const input =
+        open("skill") + close("skill") + " ".repeat(99_000) + "x" + " ".repeat(60_000);
 
-    // Correctness: all tool tags removed, prose preserved
-    expect(result).not.toContain("invoke");
-    expect(result).toContain("Legitimate prose at the end.");
-  });
+      const result = stripToolMarkup(input);
+
+      expect(result).not.toMatch(/<\/?skill>/);
+      expect(result).not.toMatch(/truncat/i);
+      expect(result).toBe("x");
+    },
+    REDOS_TIMEOUT_MS,
+  );
+
+  it(
+    "strips a very large run of unmatched tool tags in linear time (no cap, no rescanning)",
+    () => {
+      // The second #2413 vector: many unmatched open tags. Global lazy paired-
+      // block matching rescans to end-of-string per tag (super-linear); the
+      // tokenizer removes each in a single linear pass. ~2.1MB — far beyond the
+      // former cap — so trailing prose must survive and no notice is injected.
+      const input =
+        open("invoke", ' name="Skill"').repeat(100_000) + " Legitimate closing prose.";
+
+      const result = stripToolMarkup(input);
+
+      expect(result).not.toContain("invoke");
+      expect(result).not.toMatch(/truncat/i);
+      expect(result).toContain("Legitimate closing prose.");
+    },
+    REDOS_TIMEOUT_MS,
+  );
 
   it("preserves correct stripping on normal-sized input with tool markup", () => {
     // Ensure the fix doesn't break existing behavior for normal inputs
