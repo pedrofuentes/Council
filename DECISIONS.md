@@ -353,6 +353,7 @@ This is a fundamental UX hazard for a CLI that accepts free-text human input. Us
 - ⚠️ Does not solve the underlying problem (shell expansion). Users must still learn to use `--prompt-file` for complex input. Acceptable trade-off: every CLI with free-text args has this issue; we're providing better mitigation than most.
 - ⚠️ Heuristic is imperfect: cannot detect all mangling (e.g., single-space collapse, quote removal). Documented in `--help` and README with examples.
 - 📝 Future enhancement: `council config set input.default_source file` could make `--prompt-file` the default, with `--arg` to opt into shell-parsed args. Deferred until user feedback confirms demand.
+- 📝 Amended 2026-07-05 (#2379): added a third arg-only residue tier for bash single-digit positional expansion (`$450/mo` → `50/mo`, `$180K` → `80K`), which leaves no `$`, no double space, and an attached (non-lone) suffix. Detection: a bare magnitude/rate number (`80K`, `50/mo`) with no leading `$`, gated on a money-context keyword (budget, ARPU, cost, …) so distances ("10K race") and resolutions ("4K monitor") never warn.
 
 ### ADR-020: Promote sessions to library panels via `panel save` (suffix on name collision)
 **Date**: 2026-06-15
