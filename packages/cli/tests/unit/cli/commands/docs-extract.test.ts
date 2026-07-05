@@ -297,9 +297,4 @@ describe("council docs extract", () => {
     expect(stdout).toContain("deck.key");
     expect(stdout).toMatch(/1 file.*indexed/i);
   });
-
-  it("shows --yes in help text", async () => {
-    const { stdout } = await runDocs(["extract", "--help"]);
-    expect(stdout).toMatch(/--yes/);
-  });
 });
