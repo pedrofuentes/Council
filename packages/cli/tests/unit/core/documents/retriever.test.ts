@@ -318,6 +318,76 @@ describe("createDocumentRetriever", () => {
     // ...but retrieval returns a bounded chunk, not the entire document.
     expect(hit.content.length).toBeLessThan(content.length);
   });
+
+  // ── T-13 (F-15): multi-document synthesis coverage ───────────────────
+  it("surfaces facts from EVERY relevant document, not just the largest one", async () => {
+    const indexer = createDocumentIndexer(db);
+    // One large document whose every chunk strongly matches the shared query
+    // term ("budget", high term-frequency ⇒ best BM25 rank). Unbroken, a pure
+    // `ORDER BY rank LIMIT 5` fills all five slots with THIS document's chunks
+    // and crowds out the smaller documents below — so a cross-document
+    // synthesis question answers "not provided" for a fact that IS indexed.
+    const budgetParagraph =
+      "The annual budget outlines the departmental budget allocations and the budget " +
+      "approval workflow. Every budget line item is reviewed against the prior budget " +
+      "and the forecast budget for the next planning cycle. ";
+    await indexer.index({
+      content: budgetParagraph.repeat(60),
+      sourceType: "panel",
+      sourceSlug: "finance",
+      filePath: "/docs/panels/finance/finance.pdf",
+    });
+    // Two smaller documents, each holding a DISTINCT fact plus the shared
+    // query term once. Their single chunk ranks below the large document's
+    // many chunks, so the legacy retriever never returned them.
+    await indexer.index({
+      content: "Legal compliance note: the budget sign-off codename is FALCON.",
+      sourceType: "panel",
+      sourceSlug: "finance",
+      filePath: "/docs/panels/finance/legal.docx",
+    });
+    await indexer.index({
+      content: "Operations handbook: the budget rollout codename is HERON.",
+      sourceType: "panel",
+      sourceSlug: "finance",
+      filePath: "/docs/panels/finance/ops.odt",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("budget", { panelName: "finance" });
+
+    // Payload stays bounded by the default cap...
+    expect(results.length).toBeLessThanOrEqual(5);
+    // ...yet every relevant document is represented, not only the largest.
+    const sources = new Set(results.map((r) => r.source));
+    expect(sources.has("finance.pdf")).toBe(true);
+    expect(sources.has("legal.docx")).toBe(true);
+    expect(sources.has("ops.odt")).toBe(true);
+    // The distinct facts that ARE indexed are actually surfaced.
+    const joined = results.map((r) => r.content).join("\n");
+    expect(joined).toContain("FALCON");
+    expect(joined).toContain("HERON");
+  });
+
+  it("still fills the whole result budget from a single document when only one matches", async () => {
+    const indexer = createDocumentIndexer(db);
+    // Regression guard: per-document diversity must NOT starve a lone matching
+    // document. When only one document is relevant, it keeps every top-k slot.
+    const soloParagraph =
+      "Quarterly telemetry review: the widgetmetric latency widgetmetric budget " +
+      "and the widgetmetric error widgetmetric rate are tracked each widgetmetric cycle. ";
+    await indexer.index({
+      content: soloParagraph.repeat(60),
+      sourceType: "expert",
+      sourceSlug: "sre",
+      filePath: "/docs/experts/sre/telemetry.pdf",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("widgetmetric", { expertSlug: "sre" });
+    expect(results.length).toBe(5);
+    expect(results.every((r) => r.source === "telemetry.pdf")).toBe(true);
+  });
 });
 
 describe("buildExpertRetrievalScopes", () => {

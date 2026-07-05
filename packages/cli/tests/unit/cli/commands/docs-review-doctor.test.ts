@@ -151,6 +151,58 @@ describe("council docs review", () => {
     expect(stdout).toMatch(/no files need review/i);
   });
 
+  it("uses correct singular grammar for exactly one pending file (T-03/F-14)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          failed: 1,
+          files: [
+            fileDetail({
+              filename: "broken.pdf",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Should be "1 file that needs review" (singular), not "1 file that need review"
+    expect(stdout).toMatch(/1 file that needs review/);
+  });
+
+  it("uses correct plural grammar for multiple pending files (T-03/F-14)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          failed: 2,
+          files: [
+            fileDetail({
+              filename: "a.pdf",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+            fileDetail({
+              filename: "b.pdf",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Should be "2 files that need review" (plural)
+    expect(stdout).toMatch(/2 files that need review/);
+  });
+
   it("lists failed files with a human-readable error reason", async () => {
     const { stdout, error } = await runDocs(
       ["review", "finance"],
@@ -296,20 +348,22 @@ describe("council docs review", () => {
     expect(stdout).not.toMatch(/AI extraction available/i);
   });
 
-  it("does not flag a blocklisted extension as AI-extraction-eligible (blocklist wins over allowlist)", async () => {
+  it("allowlist overrides blocklist for extension eligibility (T-11)", async () => {
+    // After T-11: when .zip is in allowedExtensions, it's reported as
+    // needs-review (AI-extraction-eligible) rather than unsupported.
     const { stdout } = await runDocs(
       ["review", "finance"],
       depsFor(
         {
           kind: "scanned",
           result: scanResult({
-            failed: 1,
+            needsReview: 1,
             files: [
               fileDetail({
                 filename: "archive.zip",
-                status: "failed",
-                errorKind: "unsupported-format",
-                errorMessage: "Unsupported format (.zip)",
+                status: "needs-review",
+                extension: ".zip",
+                aiExtracted: true,
               }),
             ],
           }),
@@ -322,11 +376,8 @@ describe("council docs review", () => {
     );
 
     expect(stdout).toContain("archive.zip");
-    // `.zip` is blocklisted by the AI fallback, so it can never actually
-    // be AI-extracted — even when the user explicitly allowlists it. The
-    // "AI extraction available" label must not appear, otherwise
-    // `docs extract` is a dead-end for this file.
-    expect(stdout).not.toMatch(/AI extraction available/i);
+    // T-11: .zip in allowlist → flagged for AI-extraction review.
+    expect(stdout).toMatch(/awaiting AI-extraction review/i);
   });
 
   it("emits an error and non-zero exit when the panel does not exist", async () => {

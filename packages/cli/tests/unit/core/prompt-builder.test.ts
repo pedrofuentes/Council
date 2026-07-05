@@ -915,6 +915,61 @@ describe("buildSystemPrompt() — anti-tool-seeking constraints (T-11)", () => {
   });
 });
 
+describe("buildSystemPrompt() — forbids emitting tool/skill-invocation markup (T-08)", () => {
+  const forbiddenSectionOf = (def: ExpertDefinition): string => {
+    const prompt = buildSystemPrompt(def, undefined, "Analyze this design.");
+    return prompt.slice(prompt.indexOf("[6] FORBIDDEN MOVES"), prompt.indexOf("[7] MEMORY"));
+  };
+  const bulletsOf = (section: string): readonly string[] =>
+    section.split("\n").filter((line) => line.trimStart().startsWith("- "));
+
+  const antiMarkupBulletOf = (def: ExpertDefinition): string => {
+    const bullets = bulletsOf(forbiddenSectionOf(def));
+    return bullets.filter((line) => /markup or XML/i.test(line)).join("\n");
+  };
+
+  it("injects a distinct anti-tool-markup forbidden move for generic experts", () => {
+    const bullet = antiMarkupBulletOf(genericDefinition);
+    expect(bullet).not.toBe("");
+    expect(bullet).toMatch(/tool-call/i);
+    expect(bullet).toMatch(/function-call/i);
+    expect(bullet).toMatch(/skill-invocation/i);
+    expect(bullet).toMatch(/plain[- ]prose/i);
+    // Names the concrete leaked tag shapes so the rule is unambiguous.
+    expect(bullet).toMatch(/invoke/i);
+    expect(bullet).toMatch(/search_skill/i);
+    expect(bullet).toMatch(/list_skills/i);
+    // Discriminating: must NOT be folded into the no-tool-access or deferral rules.
+    expect(bullet).not.toMatch(/you have NO tool access/i);
+    expect(bullet).not.toMatch(/need to examine/i);
+  });
+
+  it("injects the same anti-tool-markup forbidden move for persona experts (persona identity preserved)", () => {
+    const bullet = antiMarkupBulletOf(baseDefinition);
+    expect(bullet).not.toBe("");
+    expect(bullet).toMatch(/skill-invocation/i);
+    expect(bullet).toMatch(/plain[- ]prose/i);
+  });
+
+  it("keeps the anti-tool-markup rule as its own bullet, exactly once", () => {
+    const bullets = bulletsOf(forbiddenSectionOf(genericDefinition));
+    const antiMarkup = bullets.filter((line) => /markup or XML/i.test(line));
+    expect(antiMarkup).toHaveLength(1);
+  });
+
+  it("orders the anti-tool-markup move after the deferral rule and before profile moves", () => {
+    const section = forbiddenSectionOf(
+      { ...genericDefinition, forbiddenMoves: ["fabricate a statistic"] } as ExpertDefinition,
+    );
+    const idxDeferral = section.search(/need to examine/i);
+    const idxMarkup = section.search(/markup or XML/i);
+    const idxProfile = section.indexOf("fabricate a statistic");
+    expect(idxDeferral).toBeGreaterThanOrEqual(0);
+    expect(idxMarkup).toBeGreaterThan(idxDeferral);
+    expect(idxProfile).toBeGreaterThan(idxMarkup);
+  });
+});
+
 describe("buildSystemPrompt() — generic expert domain framing (F17)", () => {
   const genericExpert: ExpertDefinition = {
     slug: "economist",

@@ -45,7 +45,13 @@ import { TurnRepository, type Turn } from "../../memory/repositories/turns.js";
 import { synthesizeEvents, type TranscriptDocument } from "../../memory/transcript.js";
 
 import { CliUserError } from "../cli-user-error.js";
-import { resolveSession, SessionNotFoundError } from "../session-resolver.js";
+import { selectStoredConclusion } from "../conclusion-store.js";
+import type { ConcludeOutput, StoredConclusion } from "../conclusion-synthesis.js";
+import {
+  resolveSessionRef,
+  SessionNotFoundError,
+  type SessionRef,
+} from "../session-resolver.js";
 import {
   escapeBlockLeadingMarkdown,
   sanitizeExportBlock,
@@ -401,7 +407,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
       const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        let resolvedName: string;
+        let resolvedRef: SessionRef;
         // Buffer stderr from the first attempt so we can discard it if we
         // retry with a different data home — emitting it eagerly would
         // print a contradictory "No panel found matching ..." line right
@@ -411,7 +417,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           firstAttemptStderr += chunk;
         };
         try {
-          resolvedName = await resolveSession({
+          resolvedRef = await resolveSessionRef({
             db,
             dataHome,
             panelArg: panelName,
@@ -428,14 +434,14 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
             writeError(firstAttemptStderr);
             throw err;
           }
-          resolvedName = await resolveSession({
+          resolvedRef = await resolveSessionRef({
             db,
             dataHome: configuredDataHome,
             panelArg: panelName,
             writeError,
           });
         }
-        const doc = await loadFullPanelTranscript(db, resolvedName);
+        const doc = await loadFullPanelTranscript(db, resolvedRef.name, resolvedRef.panelId);
 
         if (opts.output !== undefined) {
           const rendered = renderForExport(doc, opts.format);
@@ -443,7 +449,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           await writeExportArtifact(resolvedOutput, rendered, opts.force === true, writeError);
           writeError(`Wrote ${opts.format} export to ${sanitizeExportLine(opts.output)}\n`);
           if (opts.format !== "json") {
-            const safeResolvedName = sanitizeExportLine(resolvedName);
+            const safeResolvedName = sanitizeExportLine(resolvedRef.name);
             write(
               `Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`,
             );
@@ -461,7 +467,7 @@ export function buildExportCommand(deps: ExportCommandDeps = {}): Command {
           return;
         }
         write(renderForExport(doc, opts.format));
-        const safeResolvedName = sanitizeExportLine(resolvedName);
+        const safeResolvedName = sanitizeExportLine(resolvedRef.name);
         write(`Next: council conclude ${safeResolvedName} | council resume ${safeResolvedName}\n`);
       } finally {
         await db.destroy().catch((err: unknown) => {
@@ -512,6 +518,71 @@ export function renderJson(doc: TranscriptDocument): string {
   );
 }
 
+/**
+ * Render the persisted Decision Framework as a markdown section, placed
+ * before the transcript. When the stored conclusion was synthesized from a
+ * different debate than the one being exported, a brief note flags it.
+ * Model-derived text is sanitized (single-line) and list items have their
+ * leading block markers neutralized to prevent outline spoofing (#2110).
+ */
+function renderDecisionFrameworkMarkdown(
+  conclusion: StoredConclusion,
+  exportedDebateId: string,
+): readonly string[] {
+  const out: ConcludeOutput = conclusion.output;
+  const lines: string[] = [];
+  lines.push("## Decision Framework");
+  lines.push("");
+  if (out.debateId !== exportedDebateId) {
+    lines.push(
+      `_Synthesized from debate ${sanitizeExportLine(out.debateId)}, which differs from the debate shown below._`,
+    );
+    lines.push("");
+  }
+  lines.push(`**Recommendation:** ${sanitizeExportLine(out.recommendation)}`);
+  lines.push(`**Confidence:** ${sanitizeExportLine(out.confidence)}`);
+  lines.push("");
+
+  lines.push("### Consensus");
+  lines.push("");
+  if (out.consensus.length === 0) {
+    lines.push("_None identified._");
+  } else {
+    for (const c of out.consensus) {
+      lines.push(`- ${escapeBlockLeadingMarkdown(sanitizeExportLine(c))}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("### Tensions");
+  lines.push("");
+  if (out.tensions.length === 0) {
+    lines.push("_None identified._");
+  } else {
+    for (const t of out.tensions) {
+      lines.push(`- ${escapeBlockLeadingMarkdown(sanitizeExportLine(t))}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("### Decision Matrix");
+  lines.push("");
+  if (out.decisionMatrix.length === 0) {
+    lines.push("_No dimensions identified._");
+    lines.push("");
+  } else {
+    for (const d of out.decisionMatrix) {
+      lines.push(`#### ${sanitizeExportLine(d.dimension)}`);
+      lines.push("");
+      for (const p of d.positions) {
+        lines.push(`- **${sanitizeExportLine(p.expert)}:** ${sanitizeExportLine(p.stance)}`);
+      }
+      lines.push("");
+    }
+  }
+  return lines;
+}
+
 export function renderMarkdown(doc: TranscriptDocument): string {
   const slugById = new Map<string, string>();
   const nameBySlug = new Map<string, string>();
@@ -545,6 +616,12 @@ export function renderMarkdown(doc: TranscriptDocument): string {
       );
     }
     lines.push("");
+  }
+
+  if (doc.conclusion !== undefined) {
+    for (const line of renderDecisionFrameworkMarkdown(doc.conclusion, doc.latestDebate.id)) {
+      lines.push(line);
+    }
   }
 
   lines.push("## Transcript");
@@ -747,17 +824,26 @@ function hasOnlyVeryShortTurns(turns: readonly { readonly content: string }[]): 
  * `originalPrompt` is the first debate's prompt (the original question
  * the panel was convened around); `latestDebate` reflects the most
  * recent debate's status/timestamps.
+ *
+ * When `panelId` is supplied (T-14: resolved from an exact session ULID) the
+ * exact session is loaded by id instead of by name, so two sessions created in
+ * the same second — which share one `findByName` handle — stay individually
+ * addressable.
  */
 async function loadFullPanelTranscript(
   db: CouncilDatabase,
   panelName: string,
+  panelId?: string,
 ): Promise<TranscriptDocument> {
   const panelRepo = new PanelRepository(db);
   const expertRepo = new ExpertRepository(db);
   const debateRepo = new DebateRepository(db);
   const turnRepo = new TurnRepository(db);
 
-  const panel = await panelRepo.findByName(panelName);
+  const panel =
+    panelId !== undefined
+      ? await panelRepo.findById(panelId)
+      : await panelRepo.findByName(panelName);
   if (!panel) {
     throw new Error(
       `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,
@@ -792,6 +878,10 @@ async function loadFullPanelTranscript(
     roundOffset += maxRound + 1;
   }
 
+  // Prefer a conclusion stored for the exported (latest) debate; otherwise
+  // fall back to the newest stored conclusion (renderers note a mismatch).
+  const conclusion = selectStoredConclusion(panel.configJson, latestDebate.id);
+
   return {
     panel,
     experts,
@@ -804,5 +894,6 @@ async function loadFullPanelTranscript(
       endedAt: latestDebate.endedAt,
     },
     turns: flattenedTurns,
+    ...(conclusion !== undefined ? { conclusion } : {}),
   };
 }

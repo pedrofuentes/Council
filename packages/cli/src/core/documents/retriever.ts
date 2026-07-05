@@ -5,9 +5,21 @@
  * snippets relevant to a user message, supporting retrieval-augmented
  * generation in chat sessions.
  *
- * Ranking: results are ordered by FTS5's built-in BM25 (`rank` aux column,
- * negative — lower is better). We return `relevanceScore = -rank` so that
- * higher values are more relevant for callers.
+ * Ranking & per-document diversity: matching chunks are ranked by FTS5's
+ * built-in BM25 (`rank` aux column, negative — lower is better), then emitted
+ * round-robin across their source documents. Each chunk is numbered WITHIN its
+ * own document (`doc_rank` via `ROW_NUMBER() OVER (PARTITION BY file_path
+ * ORDER BY rank)`) and the result is ordered by `(doc_rank, rank)`: every
+ * document's best chunk first (globally rank-ordered among themselves), then
+ * every document's second-best, and so on, before `LIMIT`. This guarantees a
+ * cross-document synthesis query retrieves a fact from EACH relevant document
+ * (T-13) instead of letting one large document — whose many chunks dominate
+ * the global BM25 order — fill every slot and crowd the others out. When only
+ * one document matches, its chunks occupy every slot exactly as a plain
+ * `ORDER BY rank` would, preserving single-document behavior; the first
+ * emitted row is always the single most relevant chunk overall. We return
+ * `relevanceScore = -rank` so that higher values are more relevant for
+ * callers.
  *
  * Excerpts: each indexed row holds a sentence-aligned, size-bounded chunk
  * (see {@link "./chunking.js"} and {@link "./indexer.js"}), so we return the
@@ -165,16 +177,32 @@ export function createDocumentRetriever(db: CouncilDatabase): DocumentRetriever 
       const runMatch = async (ftsQuery: string): Promise<readonly DocumentSnippet[]> => {
         const filters = [sql`document_index MATCH ${ftsQuery}`, ...staticFilters];
         const whereClause = sql.join(filters, sql` AND `);
+        // Per-document diversity (T-13): number every matching chunk WITHIN its
+        // own document (`doc_rank`) via a window function, then order the union
+        // by `(doc_rank, rank)` so results are emitted round-robin — each
+        // document's best chunk first (globally rank-ordered), then every
+        // document's second-best, and so on — BEFORE `LIMIT`. A single large
+        // document whose many chunks dominate the global BM25 order can no
+        // longer fill every slot and crowd out the smaller documents a
+        // cross-document synthesis question needs. When only one document
+        // matches, its chunks take every slot exactly as a plain `ORDER BY
+        // rank` would, and the first emitted row is still the single most
+        // relevant chunk overall.
         const result = await sql<SnippetRow>`
-          SELECT
-            source_type,
-            source_slug,
-            file_path,
-            content AS excerpt,
-            rank AS rank
-          FROM document_index
-          WHERE ${whereClause}
-          ORDER BY rank
+          WITH matches AS (
+            SELECT
+              source_type,
+              source_slug,
+              file_path,
+              content AS excerpt,
+              rank AS rank,
+              ROW_NUMBER() OVER (PARTITION BY file_path ORDER BY rank) AS doc_rank
+            FROM document_index
+            WHERE ${whereClause}
+          )
+          SELECT source_type, source_slug, file_path, excerpt, rank
+          FROM matches
+          ORDER BY doc_rank, rank
           LIMIT ${maxResults}
         `.execute(db);
 

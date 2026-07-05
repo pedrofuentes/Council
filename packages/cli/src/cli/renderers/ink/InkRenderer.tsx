@@ -386,8 +386,17 @@ export function createExpertLookup(state: ExpertLookup): ExpertLookup {
   };
 }
 
-function PanelRoster({ lookup }: { readonly lookup: ExpertLookup }): ReactElement | null {
-  if (lookup.panel.length === 0) return null;
+function PanelRoster({
+  lookup,
+  quiet,
+}: {
+  readonly lookup: ExpertLookup;
+  readonly quiet: boolean;
+}): ReactElement | null {
+  // The roster is informational pre-debate setup output — suppress it under
+  // --quiet (F-16), mirroring CostIndicator. Expert identity still flows
+  // through `lookup` so the transcript's turn headers keep rendering.
+  if (quiet || lookup.panel.length === 0) return null;
   const sym = getSymbols();
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -479,9 +488,11 @@ function StreamingText({
 export const StaticItemView = memo(function StaticItemView({
   item,
   lookup,
+  quiet,
 }: {
   readonly item: StaticItem;
   readonly lookup: ExpertLookup;
+  readonly quiet: boolean;
 }): ReactElement {
   switch (item.type) {
     case "round-header":
@@ -489,7 +500,7 @@ export const StaticItemView = memo(function StaticItemView({
     case "round-separator":
       return <RoundSeparator />;
     case "panel":
-      return <PanelRoster lookup={lookup} />;
+      return <PanelRoster lookup={lookup} quiet={quiet} />;
     case "turn":
       return (
         <Box flexDirection="column">
@@ -745,7 +756,7 @@ export function DebateApp({
     <Box flexDirection="column">
       {isRawModeSupported && !state.userCancelled && <CtrlCHandler onCancel={handleCancel} />}
       <Static items={state.completedItems as StaticItem[]}>
-        {(item) => <StaticItemView key={item.id} item={item} lookup={lookup} />}
+        {(item) => <StaticItemView key={item.id} item={item} lookup={lookup} quiet={quiet} />}
       </Static>
       <ActiveTurnView state={state} />
       <LoadingIndicator state={state} />

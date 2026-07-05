@@ -29,7 +29,7 @@ council convene [options] [topic]
 | `--experts <slugs...>` | Expert slugs from the library (space- or comma-separated, repeatable). Bypasses both --template and auto-compose. Because --experts is variadic, put the \<topic\> BEFORE it (or quote a comma-list) so a trailing topic is not consumed as a slug. | — |
 | `--engine <kind>` | Engine to use (default: from config) (choices: `copilot`, `mock`, `openai`, `anthropic`) | — |
 | `--format <kind>` | Output format (auto picks Ink TUI on TTY, plain text otherwise) (choices: `auto`, `json`, `plain`) | `auto` |
-| `--max-rounds <n>` | Max rounds (freeform mode only) | `4` |
+| `--max-rounds <n>` | Max rounds for freeform mode. Defaults to the panel template's declared maxRounds, else config.defaults.maxRounds. | — |
 | `--mode <kind>` | Debate mode (choices: `freeform`, `structured`) | `freeform` |
 | `--max-words <n>` | Soft per-response word budget (opening-phase anchor; structured mode scales the other phases) | `250` |
 | `--human <name>` | Add a human participant by name (repeatable) | `[]` |

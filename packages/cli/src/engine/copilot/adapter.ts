@@ -493,6 +493,10 @@ export class CopilotEngine implements CouncilEngine {
       const queue: EngineEvent[] = [];
       let done = false;
       let terminatedByError = false;
+      // Set once any streaming `assistant.message_delta` chunk is emitted, so
+      // the terminal `assistant.message` (which repeats the full assembled
+      // text) is not re-emitted as a duplicate delta (#T-07 / F-01).
+      let sawDelta = false;
       let waker: (() => void) | undefined;
       function push(evt: EngineEvent): void {
         queue.push(evt);
@@ -507,14 +511,20 @@ export class CopilotEngine implements CouncilEngine {
       const onDelta = (evt: { data: { deltaContent: string } }): void => {
         const text = evt.data?.deltaContent ?? "";
         if (text.length > 0) {
+          sawDelta = true;
           push({ kind: "message.delta", expertId, text });
         }
       };
-      // The Copilot SDK may deliver a complete response as a single
-      // assistant.message event instead of streaming assistant.message_delta
-      // events. Emit it as one message.delta so downstream consumers
-      // (debate, chat) accumulate content identically.
+      // The Copilot SDK delivers a complete response as a terminal
+      // `assistant.message` event. When nothing streamed (no
+      // `assistant.message_delta` chunks — some models/turns skip streaming),
+      // emit it as one message.delta so downstream consumers (debate, chat)
+      // accumulate content identically. When deltas DID stream, this terminal
+      // message merely repeats the already-streamed text; re-emitting it would
+      // double the response ("Falcon DriftFalcon Drift"), so it is suppressed
+      // (#T-07 / F-01).
       const onMessage = (evt: { data: { content: string } }): void => {
+        if (sawDelta) return;
         const text = evt.data?.content ?? "";
         if (text.length > 0) {
           push({ kind: "message.delta", expertId, text });

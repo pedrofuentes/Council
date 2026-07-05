@@ -129,6 +129,19 @@ export const ExpertDefinitionSchema = z
      * override cannot escape the docs root (#287, Sentinel A2).
      */
     docsPath: NonEmptyString.optional(),
+    /**
+     * For persona experts: document filenames (basenames) explicitly
+     * un-indexed via `council expert docs <slug> --remove <file>`. The
+     * training pipeline skips these, so a removed document is NOT
+     * resurrected by a later `council expert train <slug> --retrain` even
+     * though the file remains on disk in the docs dir. Persisting the
+     * exclusion here (rather than only in the `expert_documents` table,
+     * whose "removed" status is overwritten by `--retrain`) is what makes
+     * removal durable across retrains. Re-adding the same filename via
+     * `council expert train <slug> --file <path>` clears its exclusion, so
+     * this is not a permanent blacklist.
+     */
+    excludedDocs: z.array(NonEmptyString).optional(),
   })
   .superRefine((val, ctx) => {
     // Reject `[NN]` patterns in user-facing string fields so authored or
@@ -213,5 +226,8 @@ export function allowlistExpertDefinition(
       ? { personaDescription: expert.personaDescription }
       : {}),
     ...(expert.docsPath !== undefined ? { docsPath: expert.docsPath } : {}),
+    ...(expert.excludedDocs !== undefined && expert.excludedDocs.length > 0
+      ? { excludedDocs: [...expert.excludedDocs] }
+      : {}),
   };
 }

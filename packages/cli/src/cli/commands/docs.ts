@@ -399,7 +399,7 @@ function buildReviewCommand(
       const pending = failed.length + needsReview.length;
 
       write(
-        `Panel "${panel}" has ${pending} ${pending === 1 ? "file" : "files"} that need review:\n\n`,
+        `Panel "${panel}" has ${pending} ${pending === 1 ? "file that needs" : "files that need"} review:\n\n`,
       );
       let suggestFormats = false;
       for (const file of failed) {
@@ -463,7 +463,8 @@ function buildExtractCommand(
       "Run AI extraction on files a panel is holding for review (ask mode)",
     )
     .argument("<panel>", "Panel name")
-    .action(async (panel: string) => {
+    .option("--yes", "Skip confirmation prompt (non-interactive runs)")
+    .action(async (panel: string, opts: { yes?: boolean }) => {
       const scanFn = deps.scanPanel ?? defaultScanPanel;
       const configFn = deps.loadConfigFn ?? loadConfig;
 
@@ -507,18 +508,21 @@ function buildExtractCommand(
       }
       write("\n");
 
-      const provider = deps.confirmProvider
-        ? deps.confirmProvider()
-        : createReadlineConfirmProvider();
-      const confirmed = await provider.confirm(
-        `Run AI extraction on ${needsReview.length} ${needsReview.length === 1 ? "file" : "files"}? [y/N] `,
-      );
-      if (!confirmed) {
-        write("Aborted. No files were extracted.\n");
-        return;
+      // Bypass confirmation prompt when --yes is passed
+      if (opts.yes !== true) {
+        const provider = deps.confirmProvider
+          ? deps.confirmProvider()
+          : createReadlineConfirmProvider();
+        const confirmed = await provider.confirm(
+          `Run AI extraction on ${needsReview.length} ${needsReview.length === 1 ? "file" : "files"}? [y/N] `,
+        );
+        if (!confirmed) {
+          write("Aborted. No files were extracted.\n");
+          return;
+        }
       }
 
-      // Confirmed: run the EXISTING extraction path (auto-mode
+      // Confirmed (or --yes): run the EXISTING extraction path (auto-mode
       // scan-and-index) so the held files are extracted and indexed.
       const extractFn = deps.extractPanel ?? defaultExtractPanel;
       const extractLookup = await extractFn(panel);

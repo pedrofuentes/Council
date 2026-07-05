@@ -831,6 +831,7 @@ council docs formats                        # List supported formats, AI-extract
 council docs review <panel>                 # List files that failed extraction or are unsupported
                                             #   (exits non-zero when any are present — CI-friendly)
 council docs extract <panel>                # Extract files held for review (ask mode); prompts to confirm
+council docs extract <panel> --yes          # Skip confirmation (non-interactive/CI runs)
 council docs doctor <panel>                 # Document-health diagnostics for a panel
 
 # Global flags available on all commands

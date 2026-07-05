@@ -23,6 +23,7 @@ import { Command } from "commander";
 
 import packageJson from "../../package.json" with { type: "json" };
 
+import { installBrokenPipeGuard } from "./epipe-guard.js";
 import { installSqliteExperimentalWarningFilter } from "./sqlite-warning-filter.js";
 import { maybeReexecToSuppressSqliteWarning } from "./sqlite-warning-reexec.js";
 
@@ -288,7 +289,11 @@ export function buildProgram(options: BuildProgramOptions = {}): Command {
   const program = new Command();
   program
     .name("council")
-    .description("Persistent AI expert panels for deliberation and decision-making")
+    .description(
+      "Persistent AI expert panels for deliberation and decision-making\n\n" +
+        "Running 'council' with no command launches the interactive TUI by default (on TTY). " +
+        "Use 'council ui' to launch explicitly, or '--no-tui' / COUNCIL_NO_TUI to opt out.",
+    )
     .version(packageJson.version)
     .option("-q, --quiet", "Suppress informational stderr output and cost indicators")
     .option("--no-tui", "Skip the interactive terminal UI and use the classic CLI")
@@ -535,6 +540,13 @@ const isMainModule =
   import.meta.url.endsWith("/bin/council.js");
 
 if (isMainModule) {
+  // Install the broken-pipe guard before anything can write to stdout/stderr so
+  // a downstream reader that closes early (`council … | head`, `council … |
+  // less` then `q`) ends the process cleanly instead of crashing with an
+  // unhandled `write EPIPE` "Unhandled 'error' event" trace — no matter which
+  // command or setup step is mid-write. See ./epipe-guard.ts.
+  installBrokenPipeGuard();
+
   // CLI process-global setup — runs ONLY when this module is the program entry
   // point, never on import. (Importing `@council-ai/cli` must stay free of side
   // effects; see tests/unit/bin/import-side-effects.test.ts.)
