@@ -229,7 +229,9 @@ async function runInteractiveLoop(opts: InteractiveLoopOptions): Promise<void> {
     | { readonly kind: "streaming"; readonly controller: AbortController };
   let state: LoopState = { kind: "idle" };
   let interruptedAtPrompt = false;
-  let interruptedDuringStream = false;
+  // Assigned per streaming turn (reset before each `attempt()`) and by
+  // `onInterrupt`; no declaration initializer needed (no-useless-assignment).
+  let interruptedDuringStream: boolean;
   const onInterrupt = (): void => {
     if (state.kind === "streaming") {
       interruptedDuringStream = true;

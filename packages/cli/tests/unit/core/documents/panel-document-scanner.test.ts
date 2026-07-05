@@ -270,7 +270,7 @@ describe("scanAndIndexPanelDocuments", () => {
     );
 
     const escapePath = path.join(linkedDir, "escape");
-    let linkCreated = false;
+    let linkCreated: boolean;
     try {
       // junction works for directories without admin on Windows; on
       // POSIX `type` is ignored and a plain symlink is created.
@@ -503,7 +503,7 @@ describe("scanAndIndexPanelDocuments", () => {
     cleanupDirs.push(realParent, aliasHost);
     const aliasPath = path.join(aliasHost, "alias");
 
-    let linkCreated = false;
+    let linkCreated: boolean;
     try {
       await fs.symlink(realParent, aliasPath, "junction");
       linkCreated = true;

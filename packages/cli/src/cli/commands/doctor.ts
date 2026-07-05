@@ -656,7 +656,7 @@ export function buildDoctorCommand(input: DoctorDeps | Writer = {}): Command {
         } catch {
           copilotCliPathStatus = "needs-remediation";
         }
-        let telemetryEnabled = false;
+        let telemetryEnabled: boolean;
         try {
           telemetryEnabled = (await loadConfigOnce()).telemetry.enabled;
         } catch {

@@ -923,10 +923,14 @@ export class Debate {
 
     let content = "";
     let turnFailed = false;
-    let lastErrorRecoverable = false;
-    let lastErrorMessage = "";
-    let lastErrorCode: EngineErrorCode | null = null;
-    let lastErrorAborted = false;
+    // Per-attempt failure state, reset unconditionally at the top of every
+    // loop iteration (below) before any read — no declaration initializer
+    // needed (no-useless-assignment). `emptyAfterRetry` keeps its initializer
+    // because it is read after the loop when the loop body never runs.
+    let lastErrorRecoverable: boolean;
+    let lastErrorMessage: string;
+    let lastErrorCode: EngineErrorCode | null;
+    let lastErrorAborted: boolean;
     let emptyAfterRetry = false;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {

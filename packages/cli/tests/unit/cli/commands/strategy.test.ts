@@ -355,7 +355,7 @@ describe("resume --continue --strategy", () => {
     // Seed a panel with malformed configJson directly via the
     // PanelRepository (the convene happy path always writes valid JSON).
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let panelId = "";
+    let panelId: string;
     try {
       const panel = await new PanelRepository(db).create({
         name: "panel-bad",

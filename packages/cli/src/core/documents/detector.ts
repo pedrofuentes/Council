@@ -261,6 +261,7 @@ export async function detectDocumentChanges(
         // original error so the caller sees the real cause. NOT
         // suppressed by the open allowlist (Sentinel cycle 2 finding).
         await rootHandle.close().catch(() => { /* best-effort close */ });
+        // eslint-disable-next-line no-useless-assignment -- defensive fd-hygiene: drop the closed handle before rethrowing (store is intentionally unread)
         rootHandle = null;
         throw statErr;
       }
@@ -269,6 +270,7 @@ export async function detectDocumentChanges(
         (fdStat.dev !== rootIdentity.dev || fdStat.ino !== rootIdentity.ino)
       ) {
         await rootHandle.close().catch(() => { /* best-effort close */ });
+        // eslint-disable-next-line no-useless-assignment -- defensive fd-hygiene: drop the closed handle before throwing (store is intentionally unread)
         rootHandle = null;
         throw new Error(
           `document scan: root '${docsPath}' identity changed between lstat and open (TOCTOU)`,

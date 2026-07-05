@@ -527,7 +527,7 @@ function buildDeleteCommand(
         // contained: a transient read failure (SQLITE_BUSY while a debate runs concurrently)
         // must not abort a scripted `--yes/--force` delete — default to 0.
         if (opts.yes !== true && opts.force !== true) {
-          let debateCount = 0;
+          let debateCount: number;
           try {
             const runtimePanels = await ctx.runtimePanelRepo.findByNamePrefix(name);
             const exactIds = runtimePanels.filter((p) => p.name === name).map((p) => p.id);

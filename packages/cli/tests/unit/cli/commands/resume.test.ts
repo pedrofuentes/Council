@@ -314,7 +314,7 @@ describe("buildResumeCommand", () => {
   it("transcript mode handles a panel with a debate that has zero turns", async () => {
     // Seed a panel + debate but no turns.
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let panelName = "";
+    let panelName: string;
     try {
       const panel = await new PanelRepository(db).create({
         name: "empty-debate-panel",
@@ -353,7 +353,7 @@ describe("buildResumeCommand", () => {
 
   it("transcript mode maps debate.status='running' to debate.end.reason='aborted'", async () => {
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let panelName = "";
+    let panelName: string;
     try {
       const panel = await new PanelRepository(db).create({
         name: "running-panel",
@@ -390,8 +390,8 @@ describe("buildResumeCommand", () => {
 
   it("auto-continues the latest interrupted debate without requiring --prompt", async () => {
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let panelName = "";
-    let panelId = "";
+    let panelName: string;
+    let panelId: string;
     let completedDebateId = "";
     let olderInterruptedDebateId = "";
     let latestInterruptedDebateId = "";
@@ -543,8 +543,8 @@ describe("buildResumeCommand", () => {
 
   it("registers and honors SIGINT handling for auto-resumed debates", async () => {
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let panelName = "";
-    let panelId = "";
+    let panelName: string;
+    let panelId: string;
     let interruptedDebateId = "";
     try {
       const panelRepo = new PanelRepository(db);
@@ -734,8 +734,8 @@ describe("buildResumeCommand", () => {
   it("findByName resolves to the most-recently-created panel when names collide", async () => {
     // Seed two panels with the SAME name; resume should pick the newer one.
     const db = await createDatabase(path.join(testHome, "council.db"));
-    let olderId = "";
-    let newerId = "";
+    let olderId: string;
+    let newerId: string;
     try {
       const repo = new PanelRepository(db);
       const debateRepo = new DebateRepository(db);
@@ -817,7 +817,7 @@ describe("buildResumeCommand", () => {
     // Seed a panel where the system prompt has a [7] MEMORY / [8] CURRENT
     // TASK skeleton, and a prior debate with a distinctive recall marker.
     const seedingDb = await createDatabase(path.join(testHome, "council.db"));
-    let panelName = "";
+    let panelName: string;
     try {
       const panel = await new PanelRepository(seedingDb).create({
         name: "recall-resume-panel",
@@ -900,7 +900,7 @@ describe("buildResumeCommand", () => {
   it("--prompt warns to stderr when configJson cannot be parsed (no silent fallback)", async () => {
     // Seed a panel with deliberately-broken configJson.
     const seedingDb = await createDatabase(path.join(testHome, "council.db"));
-    let panelName = "";
+    let panelName: string;
     try {
       const panel = await new PanelRepository(seedingDb).create({
         name: "broken-cfg-panel",
