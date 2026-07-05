@@ -142,24 +142,14 @@ export async function runPanelChat(opts: PanelChatOptions): Promise<void> {
     // Refresh the panel's RAG corpus before any turns run so retrieval
     // sees the latest on-disk state. Failures are logged but not fatal.
     try {
-      const { scanAndIndexPanelDocuments, formatAllFailedWarning } =
-        await import("../../../core/documents/panel-document-scanner.js");
+      const { formatAllFailedWarning } = await import(
+        "../../../core/documents/panel-document-scanner.js"
+      );
       const { renderScanLines } = await import(
         "../../../cli/formatters/scan-summary.js"
       );
-      const { resolveManagedDocsDir } = await import("../docs.js");
-      const managedDocsDir = resolveManagedDocsDir(dataHome, target);
-      const result = await scanAndIndexPanelDocuments({
-        panelName: target,
-        managedDocsDir,
-        db,
-        supportedFormats: config.expert.supportedFormats,
-        maxFileSizeBytes: config.documents.maxFileSizeMB * 1024 * 1024,
-        aiFallback: {
-          mode: config.documents.aiExtraction,
-          allowedExtensions: config.documents.aiExtractionAllowedExtensions,
-        },
-      });
+      const { scanPanelDocuments } = await import("../saved-panel-runtime.js");
+      const result = await scanPanelDocuments({ panelName: target, dataHome, db, config });
       if (
         result.indexed > 0 ||
         result.failed > 0 ||
