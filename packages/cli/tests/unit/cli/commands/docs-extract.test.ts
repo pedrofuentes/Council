@@ -19,6 +19,7 @@ import {
   type PanelScanLookupResult,
 } from "../../../../src/cli/commands/docs.js";
 import type { ConfirmProvider } from "../../../../src/cli/commands/confirm.js";
+import { EXIT_USER_ERROR } from "../../../../src/cli/exit-codes.js";
 import type { CouncilConfig } from "../../../../src/config/index.js";
 import type { PanelScanResult } from "../../../../src/core/documents/panel-document-scanner.js";
 import type { ScanFileDetail } from "../../../../src/core/documents/scan-types.js";
@@ -49,6 +50,22 @@ async function runDocs(args: readonly string[], deps: DocsCommandDeps = {}): Pro
     error = err;
   }
   return { stdout, stderr, error };
+}
+
+/**
+ * Run docs command in a TTY environment (for tests that expect confirmation prompt).
+ */
+async function runDocsInTTY(
+  args: readonly string[],
+  deps: DocsCommandDeps = {},
+): Promise<RunOutcome> {
+  const originalIsTTY = process.stdout.isTTY;
+  process.stdout.isTTY = true;
+  try {
+    return await runDocs(args, deps);
+  } finally {
+    process.stdout.isTTY = originalIsTTY;
+  }
 }
 
 function makeConfig(
@@ -140,7 +157,7 @@ describe("council docs extract", () => {
       result: scanResult({ indexed: 1 }),
     }));
 
-    const { stdout, error } = await runDocs(["extract", "finance"], {
+    const { stdout, error } = await runDocsInTTY(["extract", "finance"], {
       scanPanel: async () => ({ kind: "scanned", result: review }),
       loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
       confirmProvider: factory,
@@ -166,7 +183,7 @@ describe("council docs extract", () => {
       result: scanResult({ indexed: 1 }),
     }));
 
-    const { stdout, error } = await runDocs(["extract", "finance"], {
+    const { stdout, error } = await runDocsInTTY(["extract", "finance"], {
       scanPanel: async () => ({ kind: "scanned", result: review }),
       loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
       confirmProvider: factory,
@@ -289,7 +306,7 @@ describe("council docs extract", () => {
       files: [fileDetail({ filename: "deck.key", status: "needs-review" })],
     });
     const originalIsTTY = process.stdout.isTTY;
-    process.stdout.isTTY = false; // Simulate non-TTY environment
+    process.stdout.isTTY = undefined; // Simulate real non-TTY (piped/CI)
 
     try {
       const { stderr, error } = await runDocs(["extract", "finance"], {
@@ -300,7 +317,7 @@ describe("council docs extract", () => {
       });
 
       expect(error).toBeDefined();
-      expect((error as { exitCode?: number }).exitCode).toBeGreaterThan(0);
+      expect((error as { exitCode?: number }).exitCode).toBe(EXIT_USER_ERROR);
       expect(stderr).toMatch(/not.*interactive.*terminal|use.*--yes/i);
     } finally {
       process.stdout.isTTY = originalIsTTY;
@@ -326,7 +343,7 @@ describe("council docs extract", () => {
     });
 
     expect(error).toBeDefined();
-    expect((error as { exitCode?: number }).exitCode).toBeGreaterThan(0);
+    expect((error as { exitCode?: number }).exitCode).toBe(EXIT_USER_ERROR);
   });
 
   it("sanitizes untrusted filenames before displaying them", async () => {
@@ -343,7 +360,7 @@ describe("council docs extract", () => {
     });
     const { factory } = confirmProviderReturning(false);
 
-    const { stdout } = await runDocs(["extract", "finance"], {
+    const { stdout } = await runDocsInTTY(["extract", "finance"], {
       scanPanel: async () => ({ kind: "scanned", result: review }),
       loadConfigFn: async () => makeConfig({ aiExtraction: "ask" }),
       confirmProvider: factory,

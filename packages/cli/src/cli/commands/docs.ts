@@ -26,6 +26,7 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { CliUserError } from "../cli-user-error.js";
+import { EXIT_USER_ERROR } from "../exit-codes.js";
 import {
   ensureDataDirectories,
   getCouncilDataHome,
@@ -477,10 +478,10 @@ function buildExtractCommand(write: Writer, writeError: Writer, deps: DocsComman
 
       // Non-TTY environments require --yes to proceed; exit with distinct
       // code so automation can detect the skip (issue #2403 item 1).
-      if (opts.yes !== true && process.stdout.isTTY === false) {
+      if (opts.yes !== true && process.stdout.isTTY !== true) {
         writeError("Not in an interactive terminal. Use --yes to proceed.\n");
         const err = new CliUserError("Non-interactive terminal requires --yes flag");
-        err.exitCode = 2;
+        err.exitCode = EXIT_USER_ERROR;
         throw err;
       }
 
@@ -516,7 +517,7 @@ function buildExtractCommand(write: Writer, writeError: Writer, deps: DocsComman
       if (indexed === 0) {
         writeError("No files were indexed.\n");
         const err = new CliUserError("AI extraction completed with zero files indexed");
-        err.exitCode = 3;
+        err.exitCode = EXIT_USER_ERROR;
         throw err;
       }
 
