@@ -62,6 +62,7 @@ import {
 import type { DocumentSnippet } from "./documents/retriever.js";
 import type { DebateEvent, DebatePhase } from "./types.js";
 import { appendWordBudget, resolvePhaseWordBudget } from "./word-budget.js";
+import { stripToolMarkup } from "./strip-tool-markup.js";
 
 export type DebateMode = "freeform" | "structured";
 
@@ -820,7 +821,11 @@ export class Debate {
       turnId,
       signal,
     );
-    let content = outcome.content;
+    // Neutralize any tool/skill-invocation markup the model leaked into the
+    // response BEFORE it reaches a renderer or the transcript (F-12/T-08).
+    // Sanitizing the ASSEMBLED content (not per-chunk) catches markup split
+    // across streaming deltas; it is a no-op on ordinary prose.
+    let content = stripToolMarkup(outcome.content);
     let turnFailed = outcome.turnFailed;
 
     // T14: a non-failed turn that is STILL empty after the helper's one
@@ -854,16 +859,18 @@ export class Debate {
     } else if (!turnFailed && gateMode === "regenerate") {
       // maxRegenerations defaults defensively to 0 when the field is absent.
       const maxRegenerations = this.config.qualityGate?.maxRegenerations ?? 0;
-      content = yield* this.#regenerateUntilPass(
-        expert,
-        finalPrompt,
-        content,
-        round,
-        priorSpeakers,
-        maxRegenerations,
-        turnId,
-        counters,
-        signal,
+      content = stripToolMarkup(
+        yield* this.#regenerateUntilPass(
+          expert,
+          finalPrompt,
+          content,
+          round,
+          priorSpeakers,
+          maxRegenerations,
+          turnId,
+          counters,
+          signal,
+        ),
       );
       // Emit the accepted content as a single delta so renderers that build
       // their body from turn.delta (e.g. PlainRenderer) display it. Only the
