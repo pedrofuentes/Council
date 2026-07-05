@@ -31,7 +31,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Generate CycloneDX SBOM
-        run: npx --yes @cyclonedx/cyclonedx-npm@5.0.0 --ignore-npm-errors --output-format JSON --output-file sbom.cdx.json
+        run: pnpm exec cyclonedx-npm --ignore-npm-errors --output-format JSON --output-file sbom.cdx.json
         working-directory: packages/cli
 
       - name: Upload SBOM artifact
