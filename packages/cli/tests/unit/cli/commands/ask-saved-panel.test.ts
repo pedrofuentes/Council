@@ -167,6 +167,48 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
     }
   });
 
+  it("cleans up ephemeral one-shot panel row after ask completes (T-PR16 .3)", async () => {
+    // T-PR16 .3: The one-shot saved-panel `ask` path creates a transient
+    // runtime panel row for attribution. Prior to this fix, those rows
+    // persisted, accumulating in `council sessions`. The intended behavior
+    // (per #2430 .1) is that ephemeral one-shot rows should NOT pollute the
+    // saved-panel roster. This test verifies cleanup after ask completes.
+    await writeSavedPanel();
+    let out = "";
+    const cmd = buildAskCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: (s) => {
+        out += s;
+      },
+      writeError: () => undefined,
+    });
+    cmd.exitOverride();
+
+    await cmd.parseAsync([
+      "node",
+      "council-ask",
+      SAVED_PANEL_NAME,
+      "What is our long-term strategy?",
+      "--engine",
+      "mock",
+      "--format",
+      "json",
+    ]);
+
+    const events = parseNdjson(out);
+    expect(events.filter((e) => e.kind === "turn.end")).toHaveLength(1);
+
+    // After the one-shot ask completes, the ephemeral panel row should be
+    // removed — no panel rows should remain.
+    const db = await createDatabase(path.join(testHome, "council.db"));
+    try {
+      const panels = await new PanelRepository(db).findAll();
+      expect(panels).toHaveLength(0);
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it("answers a built-in template (code-review) that is not an active session", async () => {
     // No user panel file for code-review — it must resolve as a built-in.
     let out = "";
@@ -375,6 +417,8 @@ describe("buildAskCommand — saved-panel headless fallback (F-11)", () => {
       expect(debates).toHaveLength(1);
       const panels = await new PanelRepository(verifyDb).findAll();
       expect(panels.filter((p) => p.name === "live-session-panel")).toHaveLength(1);
+      // T-PR16 .1: Assert total panel count to catch ephemeral-row pollution
+      expect(panels).toHaveLength(1);
     } finally {
       await verifyDb.destroy();
     }
