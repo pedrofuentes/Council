@@ -460,6 +460,70 @@ describe.sequential("document intelligence e2e", () => {
     expect(activeAfterReadd).toEqual(["keep.md", "readd.md"]);
   });
 
+  it("expert docs --remove maintains consistency when library.update fails (read-only YAML)", async () => {
+    await createPersonaExpert();
+    await writeExpertDoc(ctx, "boss", "keep.md", "Keeper memo about roadmap planning.");
+    await writeExpertDoc(ctx, "boss", "will-fail.md", "Memo that will fail to remove.");
+
+    await runExpertCommand(["train", "boss", "--engine", "mock"], {
+      engineFactory: () => new StubEngine([buildProfileJson("Terse.", "Empirical.")]),
+    });
+
+    // Make the expert's YAML file read-only to force library.update to fail
+    const yamlPath = path.join(ctx.testDataHome, "experts", "boss.yaml");
+    await fs.chmod(yamlPath, 0o444);
+
+    // Attempt to remove - should fail with clear error, and NOT leave document in "removed" state
+    await expect(runExpertCommand(["docs", "boss", "--remove", "will-fail.md"])).rejects.toThrow();
+
+    // After failure, document must still be active (not left in inconsistent "removed" state)
+    const documentsAfterFailed = (await readExpertDocuments(ctx, "boss"))
+      .filter((d) => d.status !== "removed")
+      .map((d) => d.filename)
+      .sort();
+    expect(documentsAfterFailed).toEqual(["keep.md", "will-fail.md"]);
+
+    // Clean up: restore write permission
+    await fs.chmod(yamlPath, 0o644);
+  });
+
+  it("expert train --file provides contextual error when excludedDocs update fails (read-only YAML)", async () => {
+    await createPersonaExpert();
+    await writeExpertDoc(ctx, "boss", "keep.md", "Keeper memo about roadmap planning.");
+    await writeExpertDoc(ctx, "boss", "readd.md", "Re-addable memo about a project.");
+
+    await runExpertCommand(["train", "boss", "--engine", "mock"], {
+      engineFactory: () => new StubEngine([buildProfileJson("Terse.", "Empirical.")]),
+    });
+
+    // Remove the document so it goes into excludedDocs
+    await runExpertCommand(["docs", "boss", "--remove", "readd.md"]);
+
+    // Make YAML read-only so excludedDocs pruning will fail
+    const yamlPath = path.join(ctx.testDataHome, "experts", "boss.yaml");
+    await fs.chmod(yamlPath, 0o444);
+
+    // Re-add document - the commit succeeds, but excludedDocs pruning should fail with contextual error
+    const source = path.join(ctx.testHome, "reimport");
+    await fs.mkdir(source, { recursive: true });
+    await fs.writeFile(path.join(source, "readd.md"), "Re-added content.", "utf-8");
+
+    // Assert on DISTINCTIVE wording from #2400 fix (not just "boss" from filesystem path).
+    // Pre-fix: raw EACCES mentions "boss.yaml" but NOT these operational phrases.
+    // Post-fix: error includes contextual guidance about what succeeded and how to recover.
+    await expect(
+      runExpertCommand(
+        ["train", "boss", "--file", path.join(source, "readd.md"), "--engine", "mock"],
+        {
+          engineFactory: () => new StubEngine([buildProfileJson("Refreshed.", "Updated.")]),
+        },
+      ),
+    ).rejects.toThrow(/after re-adding documents.*successfully committed.*exclusion list could not be pruned/is);
+
+    // Clean up
+    await fs.chmod(yamlPath, 0o644);
+  });
+
   it("panel docs link and list", async () => {
     await createPanelWithExpert();
     const linkedDir = path.join(ctx.testHome, "linked-docs");
