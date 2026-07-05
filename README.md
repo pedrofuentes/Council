@@ -835,7 +835,8 @@ council docs extract <panel> --yes          # Skip confirmation (non-interactive
 council docs doctor <panel>                 # Document-health diagnostics for a panel
 
 # Global flags available on all commands
-council <command> --quiet                   # Suppress informational stderr output and cost indicators
+council <command> --quiet                   # Suppress panel roster, setup output, and cost indicators
+                                            #   (preserves debate transcript and conclusion)
 
 # ASCII mode (environment-driven, not a flag)
 # Set COUNCIL_ASCII=1, NO_COLOR=1, or TERM=dumb to force ASCII symbols
