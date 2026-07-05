@@ -822,9 +822,11 @@ export class Debate {
       signal,
     );
     // Neutralize any tool/skill-invocation markup the model leaked into the
-    // response BEFORE it reaches a renderer or the transcript (F-12/T-08).
-    // Sanitizing the ASSEMBLED content (not per-chunk) catches markup split
-    // across streaming deltas; it is a no-op on ordinary prose.
+    // finalized response before it is persisted to turn.end, the transcript,
+    // and priorTurns (F-12/T-08). Sanitizing the ASSEMBLED content (not
+    // per-chunk) catches markup split across streaming deltas; it is a no-op
+    // on ordinary prose. NOTE: live per-chunk turn.delta streaming in off/warn
+    // modes is intentionally unsanitized (tracked in #2396).
     let content = stripToolMarkup(outcome.content);
     let turnFailed = outcome.turnFailed;
 
