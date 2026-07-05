@@ -44,8 +44,13 @@ type DocsPathViolation = "traversal" | "non-relative";
  *
  * Accepts plain relative paths (resolved under the docs root) and the
  * home-anchored `~/Council/...` default form.
+ *
+ * Exported as the single source of truth for per-expert docs-root confinement:
+ * besides the `docsPath` superRefine below, the `expert docs --remove` command
+ * reuses it to reject a computed `excludedDocs` pattern that would escape the
+ * docs root (#2464 / PR #2467 finding 6), so the two gates cannot drift.
  */
-function classifyDocsPath(value: string): DocsPathViolation | null {
+export function classifyDocsPath(value: string): DocsPathViolation | null {
   if (value.split(/[/\\]/).some((segment) => segment === "..")) return "traversal";
   if (path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || /^[A-Za-z]:/.test(value)) {
     return "non-relative";

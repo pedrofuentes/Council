@@ -31,7 +31,7 @@ import {
 import { createDocumentIndexer } from "../../core/documents/indexer.js";
 import { createDocumentProcessor } from "../../core/documents/processor.js";
 import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library.js";
-import { ExpertDefinitionSchema, type ExpertDefinition } from "../../core/expert.js";
+import { classifyDocsPath, ExpertDefinitionSchema, type ExpertDefinition } from "../../core/expert.js";
 import type { CouncilEngine } from "../../engine/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import {
@@ -858,6 +858,23 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           // exclusion. Normalize to forward slashes for cross-platform
           // consistency (#2399).
           const relativePath = path.relative(docsRoot, match.filePath).split(path.sep).join("/");
+
+          // #2464 / PR #2467 finding 6 (A2 confinement): the pattern persisted
+          // into `excludedDocs` MUST stay under the docs root. When
+          // `match.filePath` lies outside `docsRoot` (a tampered/relocated DB
+          // row, or a doc resolved through an unexpected symlink), `path.relative`
+          // yields a `..`-prefixed or absolute string; persisting it would write
+          // an unconfined traversal pattern into the expert definition — the same
+          // arbitrary-path surface the `docsPath` schema gate rejects. Reuse that
+          // classifier (single source of truth) and reject BEFORE mutating any
+          // state, so no "removed-but-unexcluded" partial result can occur.
+          if (relativePath === "" || classifyDocsPath(relativePath) !== null) {
+            const msg =
+              `Cannot remove "${safeTarget}" from "${safeSlug}": it resolves outside the ` +
+              `expert docs root, so it cannot be safely recorded as excluded. No changes were made.`;
+            writeError(msg + "\n");
+            throw new CliUserError(msg);
+          }
 
           // DB row is the source of truth for "is this document active?".
           // Mark it removed FIRST so a mid-operation failure never leaves an
