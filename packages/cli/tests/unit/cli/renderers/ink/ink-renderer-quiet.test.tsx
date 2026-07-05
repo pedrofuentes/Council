@@ -86,6 +86,47 @@ describe("DebateApp quiet mode", () => {
     expect(frame).not.toContain("Cost:");
     ui.unmount();
   });
+
+  it("suppresses the 'Panel assembled' roster when quiet is true (F-16)", async () => {
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "Body text." },
+      { kind: "turn.end", expertSlug: "alice", turnId: "t1", content: "Body text." },
+    );
+    const ui = render(<DebateApp events={events} quiet={true} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+    // Setup chatter — roster header + per-expert model line — is suppressed.
+    expect(frame).not.toContain("Panel assembled");
+    expect(frame).not.toContain("(gpt-5)");
+    // The transcript (expert turn) still renders.
+    expect(frame).toContain("Body text.");
+    ui.unmount();
+  });
+
+  it("shows the 'Panel assembled' roster when quiet is false", async () => {
+    const events = stream(
+      {
+        kind: "panel.assembled",
+        experts: [{ slug: "alice", displayName: "Alice", model: "gpt-5" }],
+      },
+      { kind: "round.start", round: 0 },
+      { kind: "turn.start", expertSlug: "alice", round: 0, seq: 0 },
+      { kind: "turn.delta", expertSlug: "alice", text: "Body text." },
+      { kind: "turn.end", expertSlug: "alice", turnId: "t1", content: "Body text." },
+    );
+    const ui = render(<DebateApp events={events} quiet={false} />);
+    await flush();
+    const frame = stripAnsi(ui.lastFrame() ?? "");
+    expect(frame).toContain("Panel assembled");
+    expect(frame).toContain("(gpt-5)");
+    ui.unmount();
+  });
 });
 
 describe("CostIndicator color branches (#713)", () => {

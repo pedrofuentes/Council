@@ -83,4 +83,42 @@ describe("PlainRenderer quiet mode", () => {
     expect(text).toContain("Important response.");
     expect(text).not.toContain("[Cost:");
   });
+
+  it("suppresses the 'Panel assembled' roster when quiet is true (F-16)", async () => {
+    const sink = new StringSink();
+    const renderer = new PlainRenderer(sink, { color: false, quiet: true });
+    await renderer.render(
+      events(
+        {
+          kind: "panel.assembled",
+          experts: [{ slug: "expert", displayName: "Expert", model: "claude-sonnet-4" }],
+        },
+        { kind: "turn.start", expertSlug: "expert", round: 0, seq: 0 },
+        { kind: "turn.delta", expertSlug: "expert", text: "Body." },
+        { kind: "turn.end", expertSlug: "expert", turnId: "01HZ", content: "Body." },
+      ),
+    );
+    const text = stripAnsi(sink.text);
+    // Setup chatter — roster header + per-expert model line — is suppressed.
+    expect(text).not.toContain("Panel assembled");
+    expect(text).not.toContain("(claude-sonnet-4)");
+    // The transcript survives, and expert identity (registered even when the
+    // roster is hidden) still labels the turn header.
+    expect(text).toContain("Body.");
+    expect(text).toContain("[1] Expert");
+  });
+
+  it("shows the 'Panel assembled' roster when quiet is false", async () => {
+    const sink = new StringSink();
+    const renderer = new PlainRenderer(sink, { color: false, quiet: false });
+    await renderer.render(
+      events({
+        kind: "panel.assembled",
+        experts: [{ slug: "expert", displayName: "Expert", model: "claude-sonnet-4" }],
+      }),
+    );
+    const text = stripAnsi(sink.text);
+    expect(text).toContain("Panel assembled");
+    expect(text).toContain("(claude-sonnet-4)");
+  });
 });
