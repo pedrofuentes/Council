@@ -1239,8 +1239,9 @@ Key flags for CI:
 - `--engine mock` — deterministic, no network calls
 - `--format json` — machine-parseable output
 - `--yes` — skip interactive confirmations
-- `--quiet` — suppress informational stderr messages (including `convene` /
-  `ask` setup progress) and rendered cost indicators
+- `--quiet` — suppress panel roster display, setup progress output (e.g.,
+  `convene` / `ask` informational messages), and cost indicators; preserves
+  the debate transcript and conclusion
 - `COUNCIL_DATA_HOME` — isolate CI data from your user data
 - `TERM=dumb` / `NO_COLOR=1` — disable terminal formatting; non-TTY output is
   plain text with no spinner animation
@@ -1465,7 +1466,7 @@ Aliases: `experts`, `panels`, and `history` are aliases for `expert`, `panel`, a
 | `--summarize-after`     | Start rolling summaries after round N                                        | (disabled)          |
 | `--format`              | Output format (`auto`, `json`, or `plain`)                                   | `auto`              |
 | `--no-conclude`         | Skip automatic conclusion synthesis after a completed debate                 | (auto-conclude)     |
-| `--quiet`               | Suppress informational messages                                              | `false`             |
+| `--quiet`               | Suppress panel roster, setup output, and cost indicators                     | `false`             |
 | `--yes`                 | Skip confirmations                                                           | `false`             |
 | `--verbose`             | Extra diagnostic output                                                      | `false`             |
 | `--max-words`           | Soft per-response word budget (50–2000); structured mode scales it per phase | `250`               |

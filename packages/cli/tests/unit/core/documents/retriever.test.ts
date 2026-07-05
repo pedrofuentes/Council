@@ -388,6 +388,123 @@ describe("createDocumentRetriever", () => {
     expect(results.length).toBe(5);
     expect(results.every((r) => r.source === "telemetry.pdf")).toBe(true);
   });
+
+  // ── T-PR12: document-diverse round-robin ordering ────────────────────
+  it("emits chunks in round-robin order across documents (each doc's best, then each doc's second-best)", async () => {
+    const indexer = createDocumentIndexer(db);
+    // Three documents, each with multiple distinct chunks matching the shared
+    // query term. The term frequency is intentionally imbalanced — docA has
+    // highest term density (best BM25 ranks overall), docB medium, docC lowest.
+    // A pure `ORDER BY rank` would emit: docA-chunk1, docA-chunk2, docB-chunk1,
+    // docA-chunk3, docB-chunk2, ... crowding out docC entirely in the top-5.
+    // The round-robin ordering (`ORDER BY doc_rank, rank`) MUST instead emit:
+    // docA-chunk1 (best overall), docB-chunk1, docC-chunk1, docA-chunk2,
+    // docB-chunk2 — guaranteeing every relevant document is represented.
+
+    // Build chunks large enough to force separate indexing (chunker uses
+    // sentence boundaries and 1200-char max). Each chunk heavily repeats
+    // the query term to dominate BM25 rank.
+    const filler =
+      "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod " +
+      "tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim " +
+      "veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea " +
+      "commodo consequat. Duis aute irure dolor in reprehenderit in voluptate " +
+      "velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat " +
+      "cupidatat non proident sunt in culpa qui officia deserunt mollit anim id " +
+      "est laborum. ";
+
+    // DocA: Three large chunks, each heavily repeating "meridian" (high term frequency).
+    const chunkA1 =
+      `Project meridian status meridian report meridian for Q1. ${filler}` +
+      `The meridian team meridian delivered meridian all meridian milestones. ${filler}` +
+      `Meridian architecture meridian is meridian production-ready. ${filler}` +
+      `Final meridian sign-off meridian complete. ${filler}`;
+    const chunkA2 =
+      `Meridian deployment meridian schedule meridian confirmed. ${filler}` +
+      `The meridian release meridian process meridian follows meridian guidelines. ${filler}` +
+      `Meridian testing meridian coverage meridian is meridian passing. ${filler}` +
+      `Meridian monitoring meridian dashboard meridian active. ${filler}`;
+    const chunkA3 =
+      `Meridian security meridian review meridian approved. ${filler}` +
+      `The meridian compliance meridian checks meridian passed meridian fully. ${filler}` +
+      `Meridian performance meridian metrics meridian within meridian budget. ${filler}` +
+      `Meridian rollout meridian timeline meridian is meridian on-track. ${filler}`;
+
+    await indexer.index({
+      content: `${chunkA1}\n\n${chunkA2}\n\n${chunkA3}`,
+      sourceType: "panel",
+      sourceSlug: "alpha",
+      filePath: "/docs/panels/alpha/meridian.pdf",
+    });
+
+    // DocB: Two large chunks, medium term frequency.
+    const chunkB1 =
+      `Beta initiative covers meridian integration. ${filler}` +
+      `The meridian API meridian endpoints are meridian stable. ${filler}` +
+      `Meridian documentation meridian is meridian published. ${filler}`;
+    const chunkB2 =
+      `Meridian metrics meridian dashboard is meridian operational. ${filler}` +
+      `The meridian latency meridian budget meridian is meridian met. ${filler}` +
+      `Meridian error meridian rates meridian are meridian low. ${filler}`;
+
+    await indexer.index({
+      content: `${chunkB1}\n\n${chunkB2}`,
+      sourceType: "panel",
+      sourceSlug: "beta",
+      filePath: "/docs/panels/beta/meridian-ops.docx",
+    });
+
+    // DocC: One chunk, low term frequency.
+    const chunkC1 =
+      `Gamma handbook mentions meridian as a dependency. ${filler}` +
+      `The meridian workflow is described in section five. ${filler}`;
+
+    await indexer.index({
+      content: chunkC1,
+      sourceType: "panel",
+      sourceSlug: "gamma",
+      filePath: "/docs/panels/gamma/handbook.md",
+    });
+
+    const retriever = createDocumentRetriever(db);
+    const results = await retriever.retrieve("meridian", { sources: "panel", maxResults: 6 });
+
+    // Must have at least 5 results to validate the round-robin pattern.
+    expect(results.length).toBeGreaterThanOrEqual(5);
+
+    // Sanity: all three documents are represented.
+    const sources = results.map((r) => r.source);
+    expect(sources).toContain("meridian.pdf");
+    expect(sources).toContain("meridian-ops.docx");
+    expect(sources).toContain("handbook.md");
+
+    // Core assertion: round-robin ordering (T-13 document-diversity behavior).
+    // The first three results MUST be one chunk from EACH document (each doc's
+    // best chunk, globally rank-ordered among themselves), not three chunks
+    // from the highest-ranking document. If the retriever regresses to a plain
+    // `ORDER BY rank`, docA would fill slots 0, 1, 2 and this assertion fails.
+    const firstThreeSources = results.slice(0, 3).map((r) => r.source);
+    const uniqueFirstThree = new Set(firstThreeSources);
+    expect(uniqueFirstThree.size).toBe(3);
+    expect(uniqueFirstThree.has("meridian.pdf")).toBe(true);
+    expect(uniqueFirstThree.has("meridian-ops.docx")).toBe(true);
+    expect(uniqueFirstThree.has("handbook.md")).toBe(true);
+
+    // Slots 3-4 must be the SECOND-best chunks from docA and docB
+    // (docC has only one chunk, so it's exhausted after the first round).
+    // If the ordering were purely by global rank, we'd see docA dominating
+    // these slots too; round-robin ensures docB's second chunk appears.
+    const slot3 = results[3];
+    const slot4 = results[4];
+    if (slot3 === undefined || slot4 === undefined) {
+      throw new Error("Expected at least 5 results");
+    }
+    const secondRoundSources = new Set([slot3.source, slot4.source]);
+    // DocA and DocB each contribute their second-best chunk; DocC exhausted.
+    expect(secondRoundSources.has("meridian.pdf")).toBe(true);
+    expect(secondRoundSources.has("meridian-ops.docx")).toBe(true);
+    expect(secondRoundSources.has("handbook.md")).toBe(false);
+  });
 });
 
 describe("buildExpertRetrievalScopes", () => {
@@ -400,8 +517,20 @@ describe("buildExpertRetrievalScopes", () => {
   });
 
   it("returns just the expert scope when the expert belongs to no panels", () => {
-    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([
+    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([{ sourceType: "expert", slug: "ceo" }]);
+  });
+});
+
+describe("buildExpertRetrievalScopes", () => {
+  it("returns the expert scope first, then one panel scope per membership", () => {
+    expect(buildExpertRetrievalScopes("ceo", ["exec-team", "growth"])).toEqual([
       { sourceType: "expert", slug: "ceo" },
+      { sourceType: "panel", slug: "exec-team" },
+      { sourceType: "panel", slug: "growth" },
     ]);
+  });
+
+  it("returns just the expert scope when the expert belongs to no panels", () => {
+    expect(buildExpertRetrievalScopes("ceo", [])).toEqual([{ sourceType: "expert", slug: "ceo" }]);
   });
 });
