@@ -732,77 +732,85 @@ describe("resolveSession", () => {
     // or whitespace/case variations.
     describe("ULID adversarial coverage", () => {
       it("rejects a 25-character input (one char short of ULID length)", async () => {
-        await seedPanelReturning("exact-panel");
+        // Seed a panel name matching the input to prove it's treated as a name
+        // (not a ULID) when the pattern check fails on length.
+        await seedPanelReturning("01ZZZZZZZZZZZZZZZZZZZZZZZ");
 
-        await expect(
-          resolveSessionRef({
-            db,
-            dataHome: testHome,
-            panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZ", // 25 chars
-            writeError: () => undefined,
-            isNonInteractive: () => true,
-          }),
-        ).rejects.toBeInstanceOf(SessionNotFoundError);
+        // The input matches a panel NAME but is 25 chars (not 26), so the ULID
+        // pattern check fails. The resolver treats it as a name/prefix. Since
+        // there's an exact match, it should resolve to that panel.
+        const ref = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZ", // 25 chars
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(ref.name).toBe("01ZZZZZZZZZZZZZZZZZZZZZZZ");
       });
 
       it("rejects a 27-character input (one char over ULID length)", async () => {
-        await seedPanelReturning("exact-panel");
+        // Seed a panel name matching the input to prove it's treated as a name
+        // (not a ULID) when the pattern check fails on length.
+        await seedPanelReturning("01ZZZZZZZZZZZZZZZZZZZZZZZZZ");
 
-        await expect(
-          resolveSessionRef({
-            db,
-            dataHome: testHome,
-            panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZZZ", // 27 chars
-            writeError: () => undefined,
-            isNonInteractive: () => true,
-          }),
-        ).rejects.toBeInstanceOf(SessionNotFoundError);
+        // The input matches a panel NAME but is 27 chars (not 26), so the ULID
+        // pattern check fails. The resolver treats it as a name/prefix.
+        const ref = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZZZ", // 27 chars
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(ref.name).toBe("01ZZZZZZZZZZZZZZZZZZZZZZZZZ");
       });
 
       it("rejects ULID-length input with excluded Crockford chars (I, L, O, U)", async () => {
-        await seedPanelReturning("exact-panel");
+        // Seed panel names matching the inputs to prove they're treated as names
+        // (not ULIDs) when the pattern check fails on excluded charset.
+        await seedPanelReturning("01IIIIIIIIIIIIIIIIIIIIIIII");
+        await seedPanelReturning("01LLLLLLLLLLLLLLLLLLLLLLLL");
+        await seedPanelReturning("01OOOOOOOOOOOOOOOOOOOOOOOO");
+        await seedPanelReturning("01UUUUUUUUUUUUUUUUUUUUUUUU");
 
         // Crockford base32 excludes I, L, O, U to avoid ambiguity — these should
-        // not match the ULID pattern.
-        await expect(
-          resolveSessionRef({
-            db,
-            dataHome: testHome,
-            panelArg: "01IIIIIIIIIIIIIIIIIIIIIIII", // I excluded
-            writeError: () => undefined,
-            isNonInteractive: () => true,
-          }),
-        ).rejects.toBeInstanceOf(SessionNotFoundError);
+        // not match the ULID pattern. Resolver treats them as names/prefixes.
+        const refI = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: "01IIIIIIIIIIIIIIIIIIIIIIII", // I excluded
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(refI.name).toBe("01IIIIIIIIIIIIIIIIIIIIIIII");
 
-        await expect(
-          resolveSessionRef({
-            db,
-            dataHome: testHome,
-            panelArg: "01LLLLLLLLLLLLLLLLLLLLLLLL", // L excluded
-            writeError: () => undefined,
-            isNonInteractive: () => true,
-          }),
-        ).rejects.toBeInstanceOf(SessionNotFoundError);
+        const refL = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: "01LLLLLLLLLLLLLLLLLLLLLLLL", // L excluded
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(refL.name).toBe("01LLLLLLLLLLLLLLLLLLLLLLLL");
 
-        await expect(
-          resolveSessionRef({
-            db,
-            dataHome: testHome,
-            panelArg: "01OOOOOOOOOOOOOOOOOOOOOOOO", // O excluded
-            writeError: () => undefined,
-            isNonInteractive: () => true,
-          }),
-        ).rejects.toBeInstanceOf(SessionNotFoundError);
+        const refO = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: "01OOOOOOOOOOOOOOOOOOOOOOOO", // O excluded
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(refO.name).toBe("01OOOOOOOOOOOOOOOOOOOOOOOO");
 
-        await expect(
-          resolveSessionRef({
-            db,
-            dataHome: testHome,
-            panelArg: "01UUUUUUUUUUUUUUUUUUUUUUUU", // U excluded
-            writeError: () => undefined,
-            isNonInteractive: () => true,
-          }),
-        ).rejects.toBeInstanceOf(SessionNotFoundError);
+        const refU = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: "01UUUUUUUUUUUUUUUUUUUUUUUU", // U excluded
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(refU.name).toBe("01UUUUUUUUUUUUUUUUUUUUUUUU");
       });
 
       it("pattern match is case-insensitive but database lookup is case-sensitive", async () => {

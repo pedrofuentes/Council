@@ -11,9 +11,10 @@ import { TurnRepository } from "../../src/memory/repositories/turns.js";
  * in the same second) but have distinct ULIDs (session ids) and distinguishable
  * debate content.
  *
- * **Deterministic ordering**: uses sequential `await` (no setTimeout) to ensure
- * the second session's `createdAt` is strictly after the first's, so export/
- * resume ordering by `id` is stable across test runs.
+ * **Deterministic ordering**: ensures the second session's `created_at` is
+ * strictly later than the first's by directly setting deterministic timestamps
+ * via database UPDATE (no real timers). This guarantees stable export/resume
+ * ordering (which sorts by `created_at DESC, id DESC`) across all test runs.
  *
  * Use case: tests that verify ULID-based resolution can distinguish sessions
  * that share a timestamped resume/export name (T-14/F-08).
@@ -70,6 +71,26 @@ export async function seedTwoSameSecondSessions(testHome: string): Promise<{
     const firstId = await seedOne(firstMarker);
     const secondMarker = "SECOND-SESSION-UNIQUE-CONTENT-beta";
     const secondId = await seedOne(secondMarker);
+
+    // Fix flakiness: panel.create uses `new Date().toISOString()` which is
+    // millisecond-granular, and panel.id is non-monotonic `ulid()`. Both
+    // sessions can land in the same millisecond ~10-15% of the time, causing
+    // the `created_at DESC, id DESC` sort to pick the wrong session. Explicitly
+    // set deterministic timestamps to ensure strict ordering.
+    const firstCreatedAt = "2026-06-16T23:47:21.000Z";
+    const secondCreatedAt = "2026-06-16T23:47:21.500Z";
+
+    await db
+      .updateTable("panels")
+      .set({ created_at: firstCreatedAt, updated_at: firstCreatedAt })
+      .where("id", "=", firstId)
+      .execute();
+
+    await db
+      .updateTable("panels")
+      .set({ created_at: secondCreatedAt, updated_at: secondCreatedAt })
+      .where("id", "=", secondId)
+      .execute();
 
     return {
       sharedName,

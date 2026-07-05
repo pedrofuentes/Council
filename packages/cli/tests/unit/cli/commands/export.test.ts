@@ -719,14 +719,6 @@ async function seedPanelWithIncompleteDebate(testHome: string): Promise<{ panelN
   }
 }
 
-/**
- * T-14 (F-08): seed two sessions that share one timestamped resume/export
- * name (as two `convene` runs in the same second would) but keep distinct
- * ULIDs and distinct transcript content. A 5ms gap gives the second session a
- * strictly-later `created_at` so `findByName` (the shared-handle path) picks it
- * deterministically as the "latest".
- */
-
 describe("buildExportCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;

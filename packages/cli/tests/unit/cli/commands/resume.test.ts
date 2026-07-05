@@ -106,13 +106,6 @@ async function seedPanelWithDebate(testHome: string): Promise<SeedResult> {
   }
 }
 
-/**
- * T-14 (F-08): seed two sessions that share one timestamped resume/export name
- * (as two same-second `convene` runs would) but keep distinct ULIDs and
- * distinct transcript content, so each can only be addressed individually by
- * its ULID.
- */
-
 describe("buildResumeCommand", () => {
   let testHome: string;
   let originalHome: string | undefined;
