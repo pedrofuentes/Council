@@ -726,5 +726,140 @@ describe("resolveSession", () => {
         }),
       ).rejects.toBeInstanceOf(SessionNotFoundError);
     });
+
+    // Adversarial ULID edge cases: characterize existing resolver behavior for
+    // inputs that nearly match the ULID pattern but diverge on length, charset,
+    // or whitespace/case variations.
+    describe("ULID adversarial coverage", () => {
+      it("rejects a 25-character input (one char short of ULID length)", async () => {
+        await seedPanelReturning("exact-panel");
+
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZ", // 25 chars
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+      });
+
+      it("rejects a 27-character input (one char over ULID length)", async () => {
+        await seedPanelReturning("exact-panel");
+
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: "01ZZZZZZZZZZZZZZZZZZZZZZZZZ", // 27 chars
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+      });
+
+      it("rejects ULID-length input with excluded Crockford chars (I, L, O, U)", async () => {
+        await seedPanelReturning("exact-panel");
+
+        // Crockford base32 excludes I, L, O, U to avoid ambiguity — these should
+        // not match the ULID pattern.
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: "01IIIIIIIIIIIIIIIIIIIIIIII", // I excluded
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: "01LLLLLLLLLLLLLLLLLLLLLLLL", // L excluded
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: "01OOOOOOOOOOOOOOOOOOOOOOOO", // O excluded
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: "01UUUUUUUUUUUUUUUUUUUUUUUU", // U excluded
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+      });
+
+      it("pattern match is case-insensitive but database lookup is case-sensitive", async () => {
+        const seeded = await seedPanelReturning("case-test-panel");
+
+        // Pattern passes for both cases (ULID_PATTERN has /i flag), but the
+        // database query is case-sensitive: only the exact casing stored in the
+        // database will resolve.
+        const exactCase = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: seeded.id,
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(exactCase.panelId).toBe(seeded.id);
+
+        // Lowercase/uppercase variants match the ULID pattern (looksLikeUlid
+        // returns true), but if the stored id is uppercase, lowercase lookups
+        // fail at the database level.
+        const isUppercase = seeded.id === seeded.id.toUpperCase();
+        const wrongCase = isUppercase ? seeded.id.toLowerCase() : seeded.id.toUpperCase();
+
+        await expect(
+          resolveSessionRef({
+            db,
+            dataHome: testHome,
+            panelArg: wrongCase,
+            writeError: () => undefined,
+            isNonInteractive: () => true,
+          }),
+        ).rejects.toBeInstanceOf(SessionNotFoundError);
+      });
+
+      it("resolves ULID with leading/trailing whitespace (trim happens before pattern match)", async () => {
+        const seeded = await seedPanelReturning("whitespace-panel");
+
+        // The resolver trims panelArg before pattern matching, so whitespace
+        // around a valid ULID is stripped and resolution proceeds normally.
+        const withLeading = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: ` ${seeded.id}`, // leading space
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(withLeading.panelId).toBe(seeded.id);
+
+        const withTrailing = await resolveSessionRef({
+          db,
+          dataHome: testHome,
+          panelArg: `${seeded.id} `, // trailing space
+          writeError: () => undefined,
+          isNonInteractive: () => true,
+        });
+        expect(withTrailing.panelId).toBe(seeded.id);
+      });
+    });
   });
 });
