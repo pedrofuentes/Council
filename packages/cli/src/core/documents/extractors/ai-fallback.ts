@@ -292,23 +292,127 @@ function detectKnownSignature(buffer: Buffer): string | null {
   return null;
 }
 
+/** Byte sequence terminating an XML comment (`-->`). */
+const XML_COMMENT_END = "-->";
+/** Byte sequence terminating an XML processing instruction / prolog (`?>`). */
+const XML_PI_END = "?>";
+
+/** Whether `byte` is XML whitespace (space, tab, LF, CR, FF, VT). */
+function isXmlWhitespace(byte: number | undefined): boolean {
+  return (
+    byte === 0x20 ||
+    byte === 0x09 ||
+    byte === 0x0a ||
+    byte === 0x0d ||
+    byte === 0x0c ||
+    byte === 0x0b
+  );
+}
+
 /**
- * Detect SVG images by searching for an actual <svg root element in a bounded prefix.
- * Fixes #2459 item 1: generic <?xml files without <svg root are NOT misclassified as SVG.
+ * Skip a markup declaration (e.g. `<!DOCTYPE ...>`) starting just after the
+ * leading `<!`. Accounts for an optional internal subset (`[ ... ]`) whose body
+ * may itself contain `>` characters, so those do not terminate the declaration
+ * prematurely. Returns the index immediately after the closing `>`, or -1 when
+ * the declaration is unterminated. Single forward pass — O(remaining bytes).
+ */
+function skipDeclaration(buffer: Buffer, start: number): number {
+  const len = buffer.length;
+  let inSubset = false;
+  for (let i = start; i < len; i += 1) {
+    const c = buffer[i];
+    if (c === 0x5b) {
+      inSubset = true; // '['
+    } else if (c === 0x5d) {
+      inSubset = false; // ']'
+    } else if (c === 0x3e && !inSubset) {
+      return i + 1; // '>' outside the internal subset terminates the declaration
+    }
+  }
+  return -1;
+}
+
+/**
+ * Whether the bytes at `i` form an `<svg` root token: `<` `s` `v` `g`
+ * (case-insensitive) followed by whitespace or `>`. Mirrors the historical
+ * `/<svg[\s>]/i` token check. Uses `===` comparisons so it is safe under
+ * `noUncheckedIndexedAccess` (out-of-range reads are `undefined`, never a match).
+ */
+function isSvgRootAt(buffer: Buffer, i: number, len: number): boolean {
+  if (i + 5 > len) return false; // need '<svg' plus a delimiter byte
+  return (
+    buffer[i] === 0x3c && // '<'
+    (buffer[i + 1] === 0x73 || buffer[i + 1] === 0x53) && // 's' / 'S'
+    (buffer[i + 2] === 0x76 || buffer[i + 2] === 0x56) && // 'v' / 'V'
+    (buffer[i + 3] === 0x67 || buffer[i + 3] === 0x47) && // 'g' / 'G'
+    (isXmlWhitespace(buffer[i + 4]) || buffer[i + 4] === 0x3e) // whitespace or '>'
+  );
+}
+
+/**
+ * Detect SVG images by locating an actual `<svg` root element.
  *
- * Returns "SVG image" if <svg root is found, null otherwise.
+ * Fixes #2459 item 1: generic `<?xml` files without an `<svg` root are NOT
+ * misclassified as SVG.
+ *
+ * Fixes #2481: the previous implementation only scanned a fixed 2KB prefix, so
+ * an adversarial file could prepend an arbitrary amount of *insignificant*
+ * leading XML (whitespace, comments, an `<?xml?>` prolog, and/or a DOCTYPE) to
+ * push the `<svg` root past that window and evade the ALWAYS-blocked SVG
+ * signature (#2392). This scan skips leading insignificant XML in a single
+ * linear forward pass — `i` only advances, so total work is O(buffer.length)
+ * with no backtracking (ReDoS-safe, no XML parser) — then checks whether the
+ * first *significant* token is an `<svg` root.
+ *
+ * Returns "SVG image" if an `<svg` root is found, null otherwise.
  */
 function detectSvg(buffer: Buffer): string | null {
-  // Scan up to first 2KB for <svg (handles BOM/whitespace/prolog/comments/DOCTYPE)
-  const scanLimit = Math.min(buffer.length, 2048);
-  const prefix = buffer.subarray(0, scanLimit).toString("utf8", 0, scanLimit);
+  const len = buffer.length;
+  let i = 0;
 
-  // Look for <svg (case-insensitive, word boundary)
-  if (/<svg[\s>]/i.test(prefix)) {
-    return "SVG image";
+  // Skip a UTF-8 BOM (EF BB BF) if present.
+  if (len >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    i = 3;
   }
 
-  return null;
+  // Skip leading insignificant XML — whitespace, comments (<!-- -->),
+  // processing instructions / the <?xml?> prolog (<? ?>), and declarations
+  // such as <!DOCTYPE ...>. The loop only ever advances `i`, so the whole scan
+  // is a single linear pass with no backtracking.
+  while (i < len) {
+    const c = buffer[i];
+    if (isXmlWhitespace(c)) {
+      i += 1;
+      continue;
+    }
+    if (c !== 0x3c) {
+      break; // first significant byte is not '<' → cannot be an <svg root
+    }
+    const next = i + 1 < len ? buffer[i + 1] : -1;
+    if (next === 0x21) {
+      // '<!' → an XML comment or a declaration (e.g. DOCTYPE).
+      if (i + 3 < len && buffer[i + 2] === 0x2d && buffer[i + 3] === 0x2d) {
+        const end = buffer.indexOf(XML_COMMENT_END, i + 4);
+        if (end === -1) return null; // unterminated comment
+        i = end + XML_COMMENT_END.length;
+        continue;
+      }
+      const end = skipDeclaration(buffer, i + 2);
+      if (end === -1) return null; // unterminated declaration
+      i = end;
+      continue;
+    }
+    if (next === 0x3f) {
+      // '<?' → processing instruction / <?xml?> prolog.
+      const end = buffer.indexOf(XML_PI_END, i + 2);
+      if (end === -1) return null; // unterminated processing instruction
+      i = end + XML_PI_END.length;
+      continue;
+    }
+    break; // '<' followed by anything else → first significant element
+  }
+
+  return isSvgRootAt(buffer, i, len) ? "SVG image" : null;
 }
 
 /**
