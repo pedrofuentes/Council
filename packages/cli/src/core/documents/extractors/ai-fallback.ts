@@ -217,6 +217,14 @@ function magicByteSignature(buffer: Buffer, n: number = MAGIC_BYTES_LENGTH): str
  * matches.
  */
 function detectKnownSignature(buffer: Buffer): string | null {
+  if (buffer.length >= 2) {
+    const b0 = buffer[0];
+    const b1 = buffer[1];
+    // Shebang scripts (#!)
+    if (b0 === 0x23 && b1 === 0x21) return "Script (shebang)";
+    // Gzip (1F8B)
+    if (b0 === 0x1f && b1 === 0x8b) return "Gzip archive";
+  }
   if (buffer.length >= 4) {
     const b0 = buffer[0];
     const b1 = buffer[1];
@@ -229,6 +237,21 @@ function detectKnownSignature(buffer: Buffer): string | null {
     if (b0 === 0x47 && b1 === 0x49 && b2 === 0x46) return "GIF image";
     if (b0 === 0x4d && b1 === 0x5a) return "Windows executable (MZ)";
     if (b0 === 0x7f && b1 === 0x45 && b2 === 0x4c && b3 === 0x46) return "ELF executable";
+    // Mach-O: 0xFEEDFACE (32-bit BE), 0xCEFAEDFE (32-bit LE), 0xFEEDFACF (64-bit BE), 0xCFFAEDFE (64-bit LE)
+    // Also 0xCAFEBABE (universal binary)
+    if (
+      (b0 === 0xfe && b1 === 0xed && b2 === 0xfa && (b3 === 0xce || b3 === 0xcf)) ||
+      (b0 === 0xce && b1 === 0xfa && b2 === 0xed && b3 === 0xfe) ||
+      (b0 === 0xcf && b1 === 0xfa && b2 === 0xed && b3 === 0xfe) ||
+      (b0 === 0xca && b1 === 0xfe && b2 === 0xba && b3 === 0xbe)
+    )
+      return "Mach-O executable";
+    // SVG as XML or direct <svg
+    if (b0 === 0x3c && b1 === 0x73 && b2 === 0x76 && b3 === 0x67) return "SVG image";
+    if (b0 === 0x3c && b1 === 0x3f && b2 === 0x78 && b3 === 0x6d) {
+      // <?xml — could be SVG or other XML, treat as SVG for now (conservative)
+      return "SVG image";
+    }
   }
   if (buffer.length >= 5) {
     const b0 = buffer[0];
@@ -238,6 +261,27 @@ function detectKnownSignature(buffer: Buffer): string | null {
     const b4 = buffer[4];
     if (b0 === 0x7b && b1 === 0x5c && b2 === 0x72 && b3 === 0x74 && b4 === 0x66)
       return "Rich Text Format";
+    // Batch/CMD scripts (@echo)
+    if (
+      b0 === 0x40 &&
+      b1 === 0x65 &&
+      b2 === 0x63 &&
+      b3 === 0x68 &&
+      b4 === 0x6f &&
+      buffer.length >= 6 &&
+      buffer[5] === 0x20
+    )
+      return "Batch script";
+  }
+  // SQLite database (16 bytes: "SQLite format 3\0")
+  if (buffer.length >= 16) {
+    const sqliteHeader = "SQLite format 3\0";
+    if (buffer.subarray(0, 16).toString("ascii") === sqliteHeader) return "SQLite database";
+  }
+  // Tar archive (ustar at offset 257, 6 bytes: "ustar\0")
+  if (buffer.length >= 263) {
+    const ustarMarker = buffer.subarray(257, 263).toString("ascii");
+    if (ustarMarker === "ustar\0") return "Tar archive";
   }
   return null;
 }
@@ -246,13 +290,23 @@ function detectKnownSignature(buffer: Buffer): string | null {
  * Signatures that must ALWAYS be blocked regardless of file extension.
  * Mirrors the extension blocklist categories: executables and media.
  * This prevents renamed executables/images from reaching the AI surface.
+ *
+ * Extended in T-PRM1 (#2392) for defense-in-depth: scripts, Mach-O binaries,
+ * archives (tar, gzip), SQLite databases, and SVG (XML-based images).
  */
 const SIGNATURE_BLOCKLIST: ReadonlySet<string> = new Set<string>([
   "Windows executable (MZ)",
   "ELF executable",
+  "Mach-O executable",
   "PNG image",
   "JPEG image",
   "GIF image",
+  "SVG image",
+  "Script (shebang)",
+  "Batch script",
+  "Tar archive",
+  "Gzip archive",
+  "SQLite database",
 ]);
 
 function describeFormat(extension: string, buffer: Buffer): string {
@@ -304,6 +358,19 @@ function buildSuggestion(mode: "ask" | "auto", extension: string): string {
 }
 
 /**
+ * Determine whether the extension blocklist should be enforced for this config.
+ * Returns `false` when a non-empty allowlist is configured (allowlist overrides
+ * the blocklist for listed extensions). Returns `true` when NO allowlist is
+ * configured (blocklist applies unconditionally).
+ *
+ * T-PRM1 (#2392 item 3): shared helper to de-duplicate the allowlist/blocklist
+ * precedence logic between `isExtensionAiEligible` and `attemptAiFallback`.
+ */
+function shouldCheckExtensionBlocklist(config: AiFallbackConfig): boolean {
+  return config.allowedExtensions.length === 0;
+}
+
+/**
  * Pure, extension-only eligibility check for the AI fallback's *review*
  * surfacing. Returns `true` when a file with the given `extension` would
  * be eligible for AI extraction under `config` — i.e. the mode is not
@@ -335,7 +402,7 @@ export function isExtensionAiEligible(extension: string, config: AiFallbackConfi
   }
   const ext = normalizeExtension(extension);
   // When a non-empty allowlist is configured, it overrides the blocklist.
-  if (config.allowedExtensions.length > 0) {
+  if (!shouldCheckExtensionBlocklist(config)) {
     return normalizedAllowedExtensions(config).has(ext);
   }
   // No allowlist: blocklist applies unconditionally.
@@ -387,9 +454,12 @@ export async function attemptAiFallback(
     // users to opt blocklisted extensions (e.g. .png, .key) into
     // AI-extraction review. When NO allowlist is configured (empty array),
     // the blocklist applies unconditionally.
-    if (config.allowedExtensions.length > 0) {
+    if (!shouldCheckExtensionBlocklist(config)) {
+      // Non-empty allowlist: check it first.
       if (!normalizedAllowedExtensions(config).has(ext)) {
-        logger?.info(`ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}`);
+        logger?.info(
+          `ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}, size=${ctx.sizeBytes}`,
+        );
         return null;
       }
       // Extension is allowlisted — skip the default blocklist gate.
