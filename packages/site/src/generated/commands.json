@@ -709,7 +709,7 @@
           },
           {
             "flags": "--model <model>",
-            "description": "Model to use for experts (default: from config; run 'council doctor --models' to list available models)",
+            "description": "Model to use for experts — overrides template and expert defaults (default: from config; run 'council doctor --models' to list available models)",
             "long": "--model",
             "required": true,
             "optional": false,

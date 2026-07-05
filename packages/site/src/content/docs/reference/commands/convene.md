@@ -42,5 +42,5 @@ council convene [options] [topic]
 | `--no-conclude` | Skip automatic conclusion synthesis after a completed debate | — |
 | `--verbose` | Show template migration notices and zero-change summaries | — |
 | `-q, --quiet` | Suppress informational output | — |
-| `--model <model>` | Model to use for experts (default: from config; run 'council doctor --models' to list available models) | — |
+| `--model <model>` | Model to use for experts — overrides template and expert defaults (default: from config; run 'council doctor --models' to list available models) | — |
 | `--max-experts <n>` | Maximum number of experts for auto-compose | — |

@@ -426,7 +426,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
     .option("-q, --quiet", "Suppress informational output")
     .option(
       "--model <model>",
-      "Model to use for experts (default: from config; run 'council doctor --models' to list available models)",
+      "Model to use for experts — overrides template and expert defaults (default: from config; run 'council doctor --models' to list available models)",
       (v) => {
         if (!isSupportedModel(v)) {
           throw new Error(
@@ -1036,9 +1036,7 @@ export function buildConveneCommand(deps: ConveneCommandDeps = {}): Command {
               preamble: () => {
                 write(`\n# ${toSingleLineDisplay(template.name)}\n`);
                 write(`Topic: ${truncatePrompt(toSingleLineDisplay(topic))}\n`);
-                write(
-                  `Mode: ${opts.mode} | Max rounds: ${maxRounds} | Engine: ${opts.engine}\n`,
-                );
+                write(`Mode: ${opts.mode} | Max rounds: ${maxRounds} | Engine: ${opts.engine}\n`);
                 if (humanNames.length > 0) {
                   write(`Human participants: ${humanNames.join(", ")}\n`);
                 }
