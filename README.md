@@ -662,7 +662,7 @@ council docs doctor <panel>        # document-health diagnostics: indexed count,
 | ----------------------------------------- | ------------------------ | ----------------------------------------------------------- | ---------------------------------------------- |
 | `documents.maxFileSizeMB`                 | 1–500                    | `50`                                                        | Maximum file size the extractor will read      |
 | `documents.aiExtraction`                  | `off` \| `ask` \| `auto` | `off`                                                       | AI-based fallback for unsupported formats      |
-| `documents.aiExtractionAllowedExtensions` | list of extensions       | `[]` (all eligible)                                         | Restrict AI extraction to specific extensions  |
+| `documents.aiExtractionAllowedExtensions` | list of extensions       | `[]` (all eligible)                                         | Restrict AI extraction to specific extensions. A non-empty allowlist overrides the extension blocklist for listed extensions, but magic-byte signature blocklist still applies unconditionally. |
 | `expert.supportedFormats`                 | list of extensions       | 14 extensions (all above **except** `.markdown` and `.htm`) | Formats a panel's document scanner will accept |
 
 ### Chat configuration
