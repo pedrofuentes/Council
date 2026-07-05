@@ -217,3 +217,95 @@ describe("stripToolMarkup — preserves legitimate angle-bracket content", () =>
     expect(stripToolMarkup("")).toBe("");
   });
 });
+
+describe("stripToolMarkup — adversarial input protection (ReDoS defense)", () => {
+  /**
+   * The length cap policy: stripToolMarkup will sanitize up to MAX_INPUT_LENGTH
+   * bytes (100KB). If the input exceeds this limit, the function sanitizes only
+   * the allowed prefix and appends a truncation notice so users are aware that
+   * content was capped. This prevents super-linear regex behavior from blocking
+   * the event loop on adversarial model output.
+   */
+  const MAX_INPUT_LENGTH = 100_000; // 100KB
+
+  it("caps input length at 100KB and appends a truncation notice", () => {
+    // 120KB of legitimate prose + tool markup (exceeds the 100KB cap)
+    const hugeProseChunk = "x".repeat(60_000);
+    const toolBlock = open("invoke", ' name="Skill"') + "inner content" + close("invoke");
+    const moreProseChunk = "y".repeat(60_000);
+    const oversizedInput = hugeProseChunk + toolBlock + moreProseChunk;
+    expect(oversizedInput.length).toBeGreaterThan(MAX_INPUT_LENGTH);
+
+    const result = stripToolMarkup(oversizedInput);
+
+    // The result should be bounded to approximately the cap
+    expect(result.length).toBeLessThanOrEqual(MAX_INPUT_LENGTH + 200); // allow for truncation notice
+    // The truncation notice should be present
+    expect(result).toMatch(/\[content truncated.*exceeded.*limit\]/i);
+    // The result should contain the start of the input
+    expect(result.startsWith("x")).toBe(true);
+  });
+
+  it("handles 80KB of trailing whitespace without super-linear behavior", () => {
+    // This pattern triggers catastrophic backtracking in the old `[ \t]+\n` regex
+    const adversarialWhitespace =
+      "Prose content. " +
+      open("invoke", ' name="Skill"') +
+      "parameter" +
+      close("invoke") +
+      " ".repeat(80_000) + // 80KB of spaces
+      "\n" +
+      "More prose.";
+
+    // The function should complete in reasonable time and produce correct output
+    const start = Date.now();
+    const result = stripToolMarkup(adversarialWhitespace);
+    const elapsed = Date.now() - start;
+
+    // Should complete in well under 1 second (generous bound to avoid flakiness)
+    expect(elapsed).toBeLessThan(500);
+
+    // Correctness: tool markup removed, whitespace tidied
+    expect(result).not.toContain("invoke");
+    expect(result).toContain("Prose content.");
+    expect(result).toContain("More prose.");
+    // The trailing whitespace should be collapsed
+    expect(result).not.toMatch(/ {100,}/); // no long runs of spaces
+  });
+
+  it("handles 500+ unmatched invoke tags without catastrophic re-scanning", () => {
+    // Many unmatched opening tags can trigger super-linear behavior in global
+    // lazy paired-block matching (the regex engine re-scans repeatedly)
+    const unmatched = open("invoke", ' name="Skill"');
+    const adversarialTags = unmatched.repeat(500) + " Legitimate prose at the end.";
+
+    const start = Date.now();
+    const result = stripToolMarkup(adversarialTags);
+    const elapsed = Date.now() - start;
+
+    // Should complete in well under 1 second
+    expect(elapsed).toBeLessThan(500);
+
+    // Correctness: all tool tags removed, prose preserved
+    expect(result).not.toContain("invoke");
+    expect(result).toContain("Legitimate prose at the end.");
+  });
+
+  it("preserves correct stripping on normal-sized input with tool markup", () => {
+    // Ensure the fix doesn't break existing behavior for normal inputs
+    const normal =
+      "Introduction. " +
+      open("invoke", ' name="Skill"') +
+      open("parameter", ' name="q"') +
+      "value" +
+      close("parameter") +
+      close("invoke") +
+      " Conclusion.";
+
+    const result = stripToolMarkup(normal);
+    expect(result).not.toContain("invoke");
+    expect(result).not.toContain("parameter");
+    expect(result).toContain("Introduction.");
+    expect(result).toContain("Conclusion.");
+  });
+});
