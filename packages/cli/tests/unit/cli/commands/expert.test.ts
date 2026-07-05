@@ -1481,6 +1481,190 @@ fs.writeFileSync(p, body, 'utf-8');`,
   });
 
   // ────────────────────────────────────────────────────────────────────
+  // #2399 / #2467: `expert docs --remove` → `expert train` round-trip.
+  //
+  // These integration tests couple what `--remove` STORES in `excludedDocs`
+  // to what the training pipeline CONSUMES, closing the gap that let the
+  // store-time docs root diverge from the processor's match-time root — a
+  // silent no-op that re-indexed a removed document on the next train.
+  // ────────────────────────────────────────────────────────────────────
+  describe("expert docs --remove → train round-trip (#2399, #2467)", () => {
+    let env: TestEnv;
+    beforeEach(async () => {
+      env = await makeEnv();
+    });
+    afterEach(async () => {
+      await teardown(env);
+    });
+
+    const PERSONA_BASE = {
+      displayName: "My Boss",
+      role: "VP Eng",
+      expertise: { weightedEvidence: ["calibration"], referenceCases: [], notExpertIn: [] },
+      epistemicStance: "Outcome-driven",
+      kind: "persona" as const,
+      personaDescription: "VP of Engineering",
+    };
+
+    // Write a doc under the pipeline's ALWAYS-scanned root (`<expertDir>/docs`),
+    // creating any parent subdirectories. Returns the file's absolute path;
+    // because `dataHome` is already canonical this equals the realpath the
+    // processor stores, so it can be passed straight to `--remove`.
+    async function writeDoc(
+      dataHome: string,
+      slug: string,
+      relPath: string,
+      body: string,
+    ): Promise<string> {
+      const full = path.join(dataHome, "experts", slug, "docs", ...relPath.split("/"));
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, body, "utf-8");
+      return full;
+    }
+
+    async function readExcludedDocs(
+      home: string,
+      dataHome: string,
+      slug: string,
+    ): Promise<readonly string[]> {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+      const db = await createDatabase(path.join(home, "council.db"));
+      try {
+        const def = await new FileExpertLibrary(dataHome, db).get(slug);
+        return def?.excludedDocs ?? [];
+      } finally {
+        await db.destroy();
+      }
+    }
+
+    async function activeDocPaths(home: string, slug: string): Promise<readonly string[]> {
+      const { createDatabase } = await import("../../../../src/memory/db.js");
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
+      const db = await createDatabase(path.join(home, "council.db"));
+      try {
+        const docs = await new DocumentRepository(db).findByExpert(slug);
+        return docs.filter((d) => d.status !== "removed").map((d) => d.filePath);
+      } finally {
+        await db.destroy();
+      }
+    }
+
+    async function runExpert(args: readonly string[]): Promise<void> {
+      const cmd = buildExpertCommand(
+        () => {
+          /* swallow stdout */
+        },
+        () => {
+          /* swallow stderr */
+        },
+        { engineFactory: () => new StubEngine([STUB_PROFILE_JSON]) },
+      );
+      await cmd.parseAsync(["node", "council-expert", ...args]);
+    }
+
+    it("default docsPath: a removed subdir document is NOT re-indexed on retrain", async () => {
+      await seedExpert(env, { ...PERSONA_BASE, slug: "boss" });
+      const f2023 = await writeDoc(env.dataHome, "boss", "2023/summary.md", "Data from 2023.");
+      const f2024 = await writeDoc(env.dataHome, "boss", "2024/summary.md", "Data from 2024.");
+
+      await runExpert(["train", "boss"]);
+      expect(await activeDocPaths(env.home, "boss")).toEqual(
+        expect.arrayContaining([f2023, f2024]),
+      );
+
+      // Remove the 2023 file by its full canonical path (unambiguous vs 2024).
+      await runExpert(["docs", "boss", "--remove", f2023]);
+
+      // The stored exclusion is the path RELATIVE to the pipeline's docs root.
+      expect(await readExcludedDocs(env.home, env.dataHome, "boss")).toContain("2023/summary.md");
+
+      // Retrain must keep 2024 but must NOT resurrect the removed 2023 file.
+      await runExpert(["train", "boss", "--retrain"]);
+      const active = await activeDocPaths(env.home, "boss");
+      expect(active).toContain(f2024);
+      expect(active).not.toContain(f2023);
+    });
+
+    it("custom docsPath: --remove aligns with the pipeline's hardcoded docs root (#2467)", async () => {
+      // The training pipeline scans `<expertDir>/docs` and ignores
+      // `expert.docsPath`. Before the fix, `--remove` computed the exclusion
+      // relative to `docsPath`, storing e.g. `../docs/2023/summary.md` — a
+      // pattern the processor never matches — so the removed document was
+      // silently re-indexed on the next train.
+      await seedExpert(env, { ...PERSONA_BASE, slug: "boss", docsPath: "knowledge" });
+      const f2023 = await writeDoc(env.dataHome, "boss", "2023/summary.md", "Data from 2023.");
+      const f2024 = await writeDoc(env.dataHome, "boss", "2024/summary.md", "Data from 2024.");
+
+      await runExpert(["train", "boss"]);
+      await runExpert(["docs", "boss", "--remove", f2023]);
+
+      expect(await readExcludedDocs(env.home, env.dataHome, "boss")).toContain("2023/summary.md");
+
+      await runExpert(["train", "boss", "--retrain"]);
+      const active = await activeDocPaths(env.home, "boss");
+      expect(active).toContain(f2024);
+      expect(active).not.toContain(f2023);
+    });
+
+    it("symlinked data root: --remove canonicalizes so exclusion survives retrain (#2467)", async () => {
+      // Reproduce the macOS `/var`→`/private/var` case: the processor stores
+      // each file's realpath, so `--remove` must canonicalize its docs root
+      // too. A pre-fix non-realpath `path.join` yields a divergent `../` pattern
+      // even for the DEFAULT docsPath, silently re-indexing the removed file.
+      const home = await mkCanonicalTempDir("council-symlink-home-");
+      const realData = await mkCanonicalTempDir("council-symlink-real-");
+      const linkParent = await mkCanonicalTempDir("council-symlink-link-");
+      const linkData = path.join(linkParent, "data");
+      await fs.symlink(realData, linkData, "dir");
+      await copyTemplateDb(path.join(home, "council.db"));
+
+      const savedHome = process.env["COUNCIL_HOME"];
+      const savedData = process.env["COUNCIL_DATA_HOME"];
+      process.env["COUNCIL_HOME"] = home;
+      process.env["COUNCIL_DATA_HOME"] = linkData;
+      try {
+        const { createDatabase } = await import("../../../../src/memory/db.js");
+        const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
+        const seedDb = await createDatabase(path.join(home, "council.db"));
+        try {
+          await new FileExpertLibrary(linkData, seedDb).create({ ...PERSONA_BASE, slug: "boss" });
+        } finally {
+          await seedDb.destroy();
+        }
+
+        // Author docs THROUGH the symlink; their realpath resolves into realData.
+        await writeDoc(linkData, "boss", "2023/summary.md", "Data from 2023.");
+        await writeDoc(linkData, "boss", "2024/summary.md", "Data from 2024.");
+
+        await runExpert(["train", "boss"]);
+
+        // The processor stored realData-rooted paths; --remove must match those.
+        const canonical2023 = path.join(realData, "experts", "boss", "docs", "2023", "summary.md");
+        await runExpert(["docs", "boss", "--remove", canonical2023]);
+
+        expect(await readExcludedDocs(home, linkData, "boss")).toContain("2023/summary.md");
+
+        await runExpert(["train", "boss", "--retrain"]);
+        const active = await activeDocPaths(home, "boss");
+        const is2023 = (p: string): boolean => p.endsWith(path.join("2023", "summary.md"));
+        const is2024 = (p: string): boolean => p.endsWith(path.join("2024", "summary.md"));
+        expect(active.some(is2024)).toBe(true);
+        expect(active.some(is2023)).toBe(false);
+      } finally {
+        if (savedHome === undefined) delete process.env["COUNCIL_HOME"];
+        else process.env["COUNCIL_HOME"] = savedHome;
+        if (savedData === undefined) delete process.env["COUNCIL_DATA_HOME"];
+        else process.env["COUNCIL_DATA_HOME"] = savedData;
+        await fs.rm(home, { recursive: true, force: true });
+        await fs.rm(realData, { recursive: true, force: true });
+        await fs.rm(linkParent, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
   // expert train (Roadmap 6.6)
   // ────────────────────────────────────────────────────────────────────
   describe("expert train", () => {

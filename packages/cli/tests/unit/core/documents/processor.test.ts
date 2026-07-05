@@ -1610,7 +1610,9 @@ describe("large-document chunking warning (#471)", () => {
     // Verify the indexed document is the 2024 file, not the 2023 file
     const indexed = await env.docRepo.findByExpert("alice");
     expect(indexed).toHaveLength(1);
-    expect(indexed[0]!.filePath).toBe(file2024);
-    expect(indexed[0]!.filename).toBe("summary.md");
+    const doc = indexed[0];
+    expect(doc).toBeDefined();
+    expect(doc?.filePath).toBe(file2024);
+    expect(doc?.filename).toBe("summary.md");
   });
 });
