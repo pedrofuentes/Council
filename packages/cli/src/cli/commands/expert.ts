@@ -792,7 +792,7 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
       "Un-index the named document (kept on disk; profile refreshes on next use)",
     )
     .action(async (slug: string, opts: DocsOptions) => {
-      await withExpertLibrary(async (library, _config, _dataHome, db) => {
+      await withExpertLibrary(async (library, _config, dataHome, db) => {
         const expert = await library.get(slug);
         if (!expert) {
           const all = (await library.list()).map((e) => e.slug);
@@ -820,10 +820,21 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
             writeError(msg + "\n");
             throw new CliUserError(msg);
           }
+
+          // Compute the docs root to create a relative path exclusion (#2399)
+          const expertDir = path.join(dataHome, "experts", slug);
+          const docsRoot = expert.docsPath
+            ? path.join(expertDir, expert.docsPath)
+            : path.join(expertDir, "docs");
+
+          // Compute relative path from docs root for precise exclusion.
+          // Normalize to forward slashes for cross-platform consistency (#2399).
+          const relativePath = path.relative(docsRoot, match.filePath).split(path.sep).join("/");
+
           // DB row is the source of truth for "is this document active?".
           // Mark it removed FIRST so a mid-operation failure never leaves an
           // indexed-but-untracked file. The removal is then made durable by
-          // recording the filename in the expert definition's `excludedDocs`
+          // recording the relative path in the expert definition's `excludedDocs`
           // (below): unlike the `expert_documents` "removed" status — which
           // `expert train --retrain` overwrites for every row — `excludedDocs`
           // is read by the training pipeline, so the still-on-disk file is
@@ -834,9 +845,9 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
           // inconsistent state (document marked removed but not in excludedDocs).
           await documentRepo.markRemoved(match.id);
           const alreadyExcluded = expert.excludedDocs ?? [];
-          const nextExcluded = alreadyExcluded.includes(match.filename)
+          const nextExcluded = alreadyExcluded.includes(relativePath)
             ? alreadyExcluded
-            : [...alreadyExcluded, match.filename];
+            : [...alreadyExcluded, relativePath];
           try {
             await library.update(slug, { excludedDocs: nextExcluded });
           } catch (err: unknown) {
