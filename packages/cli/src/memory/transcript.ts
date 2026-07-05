@@ -49,19 +49,26 @@ export interface TranscriptDocument {
  * message when the panel is missing or has no debates yet.
  *
  * Name lookup uses `PanelRepository.findByName()` (most-recent wins on
- * collision; see Sentinel pr165 #4 for ambiguity-warning follow-up).
+ * collision; see Sentinel pr165 #4 for ambiguity-warning follow-up). When
+ * `panelId` is supplied (T-14: resolved from an exact session ULID), the exact
+ * panel is loaded by id instead — so two sessions created in the same second,
+ * which share one `findByName` handle, stay individually addressable.
  */
 export async function loadTranscript(
   db: CouncilDatabase,
   panelName: string,
   debateId?: string,
+  panelId?: string,
 ): Promise<TranscriptDocument> {
   const panelRepo = new PanelRepository(db);
   const expertRepo = new ExpertRepository(db);
   const debateRepo = new DebateRepository(db);
   const turnRepo = new TurnRepository(db);
 
-  const panel = await panelRepo.findByName(panelName);
+  const panel =
+    panelId !== undefined
+      ? await panelRepo.findById(panelId)
+      : await panelRepo.findByName(panelName);
   if (!panel) {
     throw new Error(
       `No panel found with name '${panelName}'. Run \`council sessions\` to list available panels.`,

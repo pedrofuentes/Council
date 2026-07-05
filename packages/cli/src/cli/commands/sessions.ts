@@ -266,7 +266,10 @@ export function buildSessionsCommand(depsOrWrite?: SessionsCommandDeps | Writer)
           write(`  ${icon} ${panelName} — ${topic}\n`);
           write(`    panel: ${panelName}\n`);
           write(`    resume/export: ${displayName}\n`);
-          write(`    id: ${session.id}\n`);
+          // T-14: the ULID is the session's stable, unique handle. When two
+          // same-second sessions share a resume/export slug, the id is the
+          // only handle that addresses each of them individually.
+          write(`    id: ${session.id} (unique handle for resume/export)\n`);
           write(`    status: ${latest?.status ?? "none"}\n`);
           if (isPossiblyStuckRunningDebate(latest?.status, latestActivityAt)) {
             write(`    ${formatStuckSessionHint(displayName)}\n`);

@@ -33,6 +33,7 @@ export class SessionNotFoundError extends CliUserError {
 }
 
 export interface SessionMatch {
+  readonly id: string;
   readonly name: string;
   readonly topic: string | null;
   readonly createdAt: string;
@@ -40,6 +41,17 @@ export interface SessionMatch {
 }
 
 export type SessionPicker = (matches: readonly SessionMatch[]) => Promise<SessionMatch>;
+
+/**
+ * A resolved session reference: the session's timestamped display name plus its
+ * stable, unique ULID (`panelId`). Callers that must load exactly one session —
+ * even when two sessions created in the same second share a display name — key
+ * their lookup off `panelId`; `name` stays for messaging and display.
+ */
+export interface SessionRef {
+  readonly name: string;
+  readonly panelId: string;
+}
 
 type ErrorWriter = (chunk: string) => void;
 
@@ -55,7 +67,42 @@ export interface ResolveSessionOptions {
   readonly missingPanelMessage?: string;
 }
 
+// A session/panel `id` is a ULID: 26 Crockford base32 chars (excludes I, L, O,
+// U). A value of this shape can be an exact session id used as an unambiguous
+// resume/export handle; gating on it skips a needless primary-key lookup for
+// the ordinary (timestamped-slug) panel names.
+const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+
+function looksLikeUlid(value: string): boolean {
+  return ULID_PATTERN.test(value);
+}
+
+function toRef(panel: Panel): SessionRef {
+  return { name: panel.name, panelId: panel.id };
+}
+
+function toRefFromMatch(match: SessionMatch): SessionRef {
+  return { name: match.name, panelId: match.id };
+}
+
+/**
+ * Resolve a session argument to its display name (see {@link resolveSessionRef}
+ * for the id-bearing variant). Preserved as the string-returning entry point
+ * for callers that only need the name.
+ */
 export async function resolveSession(options: ResolveSessionOptions): Promise<string> {
+  return (await resolveSessionRef(options)).name;
+}
+
+/**
+ * Resolve a session argument to a {@link SessionRef} (name + exact ULID).
+ *
+ * Resolution order: `--latest` → exact name → exact ULID (session id) → unique
+ * name prefix → ambiguous-prefix picker → template-only / not-found. The exact
+ * ULID step (T-14 / F-08) is what makes two sessions created in the same second
+ * — which share one timestamped resume/export name — individually addressable.
+ */
+export async function resolveSessionRef(options: ResolveSessionOptions): Promise<SessionRef> {
   const writeError = options.writeError ?? (() => undefined);
   const panelRepo = new PanelRepository(options.db);
 
@@ -66,7 +113,7 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
       writeError(message + "\n");
       throw new CliUserError(message);
     }
-    return latestPanel.name;
+    return toRef(latestPanel);
   }
 
   const requested = options.panelArg?.trim();
@@ -75,12 +122,21 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
   }
 
   const exactMatch = await panelRepo.findByName(requested);
-  if (exactMatch) return exactMatch.name;
+  if (exactMatch) return toRef(exactMatch);
+
+  // T-14 (F-08): a session's ULID (its `id`, shown as `id:` by `council
+  // sessions`) is a stable, unique handle. Unlike the second-granularity
+  // resume/export name that two same-second sessions share, the id addresses
+  // exactly one session, so `export`/`resume <ULID>` can reach either of them.
+  if (looksLikeUlid(requested)) {
+    const byId = await panelRepo.findById(requested);
+    if (byId) return toRef(byId);
+  }
 
   const prefixMatches = await panelRepo.findByNamePrefix(requested);
   if (prefixMatches.length === 1) {
     const onlyMatch = prefixMatches[0];
-    if (onlyMatch) return onlyMatch.name;
+    if (onlyMatch) return toRef(onlyMatch);
   }
   if (prefixMatches.length > 1) {
     const selected = await resolveAmbiguousPrefix({
@@ -90,7 +146,7 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
       isNonInteractive: options.isNonInteractive ?? defaultIsNonInteractive,
       picker: options.picker,
     });
-    return selected.name;
+    return toRefFromMatch(selected);
   }
 
   if (await panelTemplateExists(requested, options.dataHome)) {
@@ -117,7 +173,7 @@ export async function resolveSession(options: ResolveSessionOptions): Promise<st
 async function resolveMissingPanelArg(
   options: ResolveSessionOptions,
   writeError: ErrorWriter,
-): Promise<string> {
+): Promise<SessionRef> {
   if (options.missingPanelMode === "most-recently-debated") {
     const panel = await findMostRecentlyDebatedPanel(options.db);
     if (!panel) {
@@ -127,7 +183,7 @@ async function resolveMissingPanelArg(
       throw new CliUserError(message);
     }
     writeError(`Using panel: ${toSingleLineDisplay(panel.name)}\n`);
-    return panel.name;
+    return toRef(panel);
   }
 
   const message =
@@ -209,6 +265,7 @@ function formatSessionMatch(match: SessionMatch): string {
 
 function toSessionMatch(panel: Panel): SessionMatch {
   return {
+    id: panel.id,
     name: panel.name,
     topic: panel.topic,
     createdAt: panel.createdAt,

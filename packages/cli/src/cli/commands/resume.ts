@@ -32,7 +32,7 @@ import { defaultErrorWriter, defaultWriter, isQuiet, type Writer } from "./write
 import { runExtractMemoryHook } from "../extract-memory-hook.js";
 import { RENDERER_FORMATS, type RendererFormat } from "../renderers/select.js";
 import { ENGINE_KINDS, type EngineKind, runWithEngine } from "../run-with-engine.js";
-import { resolveSession } from "../session-resolver.js";
+import { resolveSessionRef } from "../session-resolver.js";
 import { resolveStrategy, STRATEGY_NAMES } from "../strategy-resolver.js";
 
 const DEFAULT_MAX_ROUNDS_CONTINUE = 1; // for resume --prompt (follow-up questions)
@@ -96,7 +96,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
       const dbPath = path.join(councilHome, "council.db");
       const db = await createDatabase(dbPath);
       try {
-        const panelName = await resolveSession({
+        const ref = await resolveSessionRef({
           db,
           dataHome: councilHome,
           panelArg,
@@ -105,7 +105,7 @@ export function buildResumeCommand(deps: ResumeCommandDeps = {}): Command {
           missingPanelMessage:
             "Panel name is required. Use `council resume <name>` or `council resume --latest`.",
         });
-        const resolved = await loadTranscript(db, panelName);
+        const resolved = await loadTranscript(db, ref.name, undefined, ref.panelId);
         const debates = await new DebateRepository(db).findByPanelId(resolved.panel.id);
         const latestDebate = debates[debates.length - 1];
         const autoResumePrompt =
