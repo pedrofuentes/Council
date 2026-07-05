@@ -331,6 +331,65 @@ describe("checkTopicAdmission", () => {
   });
 
   /**
+   * Issue #2424: Money-context gate lacks proximity constraint.
+   *
+   * The original gate ANDs money-context and residue across the WHOLE string,
+   * so unrelated combinations like "4K monitor within our budget" false-positive.
+   * Fix: require bounded adjacency (proximity window) between money keyword and
+   * residue token.
+   */
+  describe("money-context proximity constraint (#2424)", () => {
+    it.each([
+      "Should we upgrade to a 4K monitor within our budget?",
+      "What budget-friendly 4K TV should I buy?",
+      "We should raise server capacity to handle 10K requests/hour",
+    ])("does NOT warn on distant money-context + unrelated magnitude: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+
+    it.each([
+      "Q3 budget of 80K",
+      "Our funding is 2.5M for next year",
+      "server cost is 450/month",
+      "We saved 80K in budget last quarter",
+    ])("DOES warn on adjacent money-context + residue: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).toMatch(/shell expansion/i);
+    });
+  });
+
+  /**
+   * Issue #2425: Lowercase magnitude residue escapes detection (untested).
+   *
+   * The magnitude pattern lacks `/i` flag while the sibling rate pattern has it.
+   * Lowercase magnitudes (80k/2m/2.5b) are common informal money shorthand but
+   * currently escape bash-residue detection.
+   */
+  describe("case-insensitive magnitude residue (#2425)", () => {
+    it.each([
+      "We need 80k more budget",
+      "Our funding is 2m for next year",
+      "ARPU is 50/mo and budget is 2.5b",
+    ])("warns on lowercase magnitude residue as shell arg: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).toMatch(/shell expansion/i);
+    });
+
+    it.each([
+      "Should I train for a 10k race?",
+      "Q2M product roadmap review",
+    ])("does NOT warn on lowercase non-currency magnitude: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+  });
+
+  /**
    * Source-awareness (critical false-positive guard).
    *
    * The new residue signals are evidence of *already-happened* shell
