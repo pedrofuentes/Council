@@ -32,6 +32,14 @@ export class SessionNotFoundError extends CliUserError {
   }
 }
 
+/**
+ * A session match candidate returned during disambiguation (prefix/picker flows).
+ *
+ * The `id` holds the session's ULID, which uniquely identifies the session even
+ * when multiple sessions share the same timestamped name (created in the same
+ * second). Use `id` as the stable lookup key; `name`, `topic`, and timestamps
+ * are for display/selection.
+ */
 export interface SessionMatch {
   readonly id: string;
   readonly name: string;
@@ -44,9 +52,17 @@ export type SessionPicker = (matches: readonly SessionMatch[]) => Promise<Sessio
 
 /**
  * A resolved session reference: the session's timestamped display name plus its
- * stable, unique ULID (`panelId`). Callers that must load exactly one session —
- * even when two sessions created in the same second share a display name — key
- * their lookup off `panelId`; `name` stays for messaging and display.
+ * stable, unique ULID (`panelId`).
+ *
+ * **Terminology note**: `panelId` holds the session's ULID (the `id` column in
+ * the panels table). The property is named `panelId` for historical consistency
+ * with the schema, where "panel" is the storage term. In the domain/CLI layer,
+ * these are "sessions" — the resolver uses "session" in its API and messages,
+ * but the returned struct keeps `panelId` to match the database field it wraps.
+ *
+ * Callers that must load exactly one session — even when two sessions created in
+ * the same second share a display name — key their lookup off `panelId`; `name`
+ * stays for messaging and display.
  */
 export interface SessionRef {
   readonly name: string;
