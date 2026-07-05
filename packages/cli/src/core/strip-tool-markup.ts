@@ -117,7 +117,7 @@ function scanToolTags(text: string): readonly ToolTag[] {
  */
 function toolTagRemovalRanges(
   tags: readonly ToolTag[],
-): ReadonlyArray<readonly [number, number]> {
+): readonly (readonly [number, number])[] {
   const matchedClose = new Map<number, number>();
   const lastCloseByName = new Map<string, number>();
   for (let i = tags.length - 1; i >= 0; i -= 1) {
@@ -135,7 +135,7 @@ function toolTagRemovalRanges(
     }
   }
 
-  const ranges: Array<readonly [number, number]> = [];
+  const ranges: (readonly [number, number])[] = [];
   let i = 0;
   while (i < tags.length) {
     const tag = tags[i];
@@ -161,7 +161,7 @@ function toolTagRemovalRanges(
 /** Concatenate the input minus the given (ascending, non-overlapping) ranges. */
 function deleteRanges(
   text: string,
-  ranges: ReadonlyArray<readonly [number, number]>,
+  ranges: readonly (readonly [number, number])[],
 ): string {
   let out = "";
   let cursor = 0;
