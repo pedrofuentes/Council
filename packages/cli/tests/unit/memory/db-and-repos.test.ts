@@ -26,10 +26,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { sql } from "kysely";
 
-import {
-  createDatabase,
-  type CouncilDatabase,
-} from "../../../src/memory/db.js";
+import { createDatabase, type CouncilDatabase } from "../../../src/memory/db.js";
 import { PanelRepository, type NewPanel } from "../../../src/memory/repositories/panels.js";
 import { ExpertRepository, type NewExpert } from "../../../src/memory/repositories/experts.js";
 import { TurnRepository, type NewTurn } from "../../../src/memory/repositories/turns.js";
@@ -105,15 +102,15 @@ describe("createDatabase", () => {
     const holderScript = [
       'import { DatabaseSync } from "node:sqlite";',
       `const db = new DatabaseSync(${JSON.stringify(dbPath)});`,
-      'try {',
+      "try {",
       '  db.exec("BEGIN IMMEDIATE;");',
-      '  db.exec("INSERT INTO panels (id, name, topic, copilot_home, config_json, created_at, updated_at) VALUES (\'holder-panel\', \'holder-panel\', NULL, \'holder-home\', \'{}\', \'2026-01-01T00:00:00.000Z\', \'2026-01-01T00:00:00.000Z\');");',
+      "  db.exec(\"INSERT INTO panels (id, name, topic, copilot_home, config_json, created_at, updated_at) VALUES ('holder-panel', 'holder-panel', NULL, 'holder-home', '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');\");",
       '  console.log("LOCKED");',
-      '  await new Promise((resolve) => setTimeout(resolve, 250));',
+      "  await new Promise((resolve) => setTimeout(resolve, 250));",
       '  db.exec("COMMIT;");',
-      '} finally {',
-      '  db.close();',
-      '}',
+      "} finally {",
+      "  db.close();",
+      "}",
     ].join("\n");
 
     try {
@@ -147,8 +144,9 @@ describe("createDatabase", () => {
         const [exitCode] = await once(holder, "exit");
         expect(exitCode).toBe(0);
         await contenderWrite;
-        await expect(db.selectFrom("panels").select("name").orderBy("name").execute()).resolves
-          .toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
+        await expect(
+          db.selectFrom("panels").select("name").orderBy("name").execute(),
+        ).resolves.toEqual([{ name: "holder-panel" }, { name: "waiting-panel" }]);
       } finally {
         holder.kill();
       }
@@ -163,9 +161,7 @@ describe("createDatabase", () => {
     const mockClose = vi.fn();
     const mockPrepare = vi.fn((statement: string) => ({
       get: () =>
-        statement.startsWith("PRAGMA journal_mode")
-          ? { journal_mode: "delete" }
-          : undefined,
+        statement.startsWith("PRAGMA journal_mode") ? { journal_mode: "delete" } : undefined,
       run: () => ({ changes: 0, lastInsertRowid: 0 }),
       all: () => [],
     }));
@@ -213,9 +209,9 @@ describe("createDatabase", () => {
     const verifyDb = new DatabaseSync(dbPath);
     try {
       const versions = (
-        verifyDb
-          .prepare("SELECT version FROM schema_version ORDER BY version;")
-          .all() as readonly { readonly version: number }[]
+        verifyDb.prepare("SELECT version FROM schema_version ORDER BY version;").all() as readonly {
+          readonly version: number;
+        }[]
       ).map((row) => Number(row.version));
       // Migration rolled back — no version rows recorded
       expect(versions).toEqual([]);
@@ -229,7 +225,7 @@ describe("createDatabase", () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2]);
+    expect(versions).toEqual([1, 2, 3]);
 
     const indexes = (
       await sql<{
@@ -548,7 +544,7 @@ describe("Inlined migrations regression (issue #476)", () => {
     const versions = (
       await db.selectFrom("schema_version").select("version").orderBy("version").execute()
     ).map((r) => r.version);
-    expect(versions).toEqual([1, 2]);
+    expect(versions).toEqual([1, 2, 3]);
   });
 
   it("each expected table is queryable via Kysely without throwing", async () => {

@@ -157,11 +157,11 @@ describe("expert_documents.status CHECK constraint (migration 002, #340)", () =>
       await db.destroy();
     });
 
-    it("advances schema_version to [1, 2]", async () => {
+    it("advances schema_version to [1, 2, 3]", async () => {
       const versions = (
         await db.selectFrom("schema_version").select("version").orderBy("version").execute()
       ).map((r) => r.version);
-      expect(versions).toEqual([1, 2]);
+      expect(versions).toEqual([1, 2, 3]);
     });
 
     it("defines a CHECK constraint on expert_documents.status", async () => {
@@ -217,7 +217,7 @@ describe("expert_documents.status CHECK constraint (migration 002, #340)", () =>
         const versions = (
           await db.selectFrom("schema_version").select("version").orderBy("version").execute()
         ).map((r) => r.version);
-        expect(versions).toEqual([1, 2]);
+        expect(versions).toEqual([1, 2, 3]);
 
         // All pre-existing rows survive the table rebuild, values intact.
         // Assert the FULL seeded row (every column), not just id+status, so a
