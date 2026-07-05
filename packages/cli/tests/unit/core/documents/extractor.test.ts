@@ -565,22 +565,17 @@ describe("extractDocument", () => {
       expect(typeof result.modifiedAt).toBe("string");
     });
 
-    it("auto mode STILL throws unsupported-format for a blocklisted extension (.exe)", async () => {
-      // The blocklist inside attemptAiFallback ALWAYS wins, even when the
-      // extension is explicitly allow-listed.
+    it("allowlist overrides extension blocklist (T-11), but signature may still block", async () => {
+      // T-11: .exe in allowedExtensions passes the extension gate. The file
+      // content "not really an exe" lacks MZ magic bytes, so signature
+      // blocklist doesn't trigger either. AI fallback succeeds.
       const filePath = await writeUnsupported("malware.exe", "not really an exe");
-      const errors = await import("../../../../src/core/documents/extractors/errors.js");
-      let caught: unknown;
-      try {
-        await extractDocument(filePath, {
-          aiFallback: { mode: "auto", allowedExtensions: [".exe"] },
-        });
-      } catch (err) {
-        caught = err;
-      }
-      expect(caught).toBeInstanceOf(errors.ExtractionError);
-      const e = caught as InstanceType<typeof errors.ExtractionError>;
-      expect(e.kind).toBe("unsupported-format");
+      const result = await extractDocument(filePath, {
+        aiFallback: { mode: "auto", allowedExtensions: [".exe"] },
+      });
+      expect(result.metadata?.aiFallback).toBe(true);
+      expect(result.content).toContain("malware.exe");
+      expect(result.wordCount).toBeGreaterThan(0);
     });
 
     it("auto mode throws unsupported-format when a non-empty allowlist excludes the extension", async () => {

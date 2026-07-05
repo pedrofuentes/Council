@@ -307,8 +307,14 @@ function buildSuggestion(mode: "ask" | "auto", extension: string): string {
  * Pure, extension-only eligibility check for the AI fallback's *review*
  * surfacing. Returns `true` when a file with the given `extension` would
  * be eligible for AI extraction under `config` — i.e. the mode is not
- * `off`, the extension is not blocklisted, and (when a non-empty
- * allowlist is configured) the extension is allowlisted.
+ * `off`, the extension is not blocklisted (unless explicitly allowlisted),
+ * and (when a non-empty allowlist is configured) the extension is allowlisted.
+ *
+ * T-11 (F-09): when a non-empty `allowedExtensions` is configured, entries
+ * in that list override the default `BLOCKLIST`. This allows users to opt
+ * blocklisted extensions (e.g. .png, .key) into AI-extraction review by
+ * listing them explicitly. When NO allowlist is configured (empty array),
+ * the blocklist applies unconditionally.
  *
  * This is deliberately a SUBSET of the gates in {@link attemptAiFallback}:
  * it operates WITHOUT reading the file, so it omits the magic-byte
@@ -328,11 +334,13 @@ export function isExtensionAiEligible(extension: string, config: AiFallbackConfi
     return false;
   }
   const ext = normalizeExtension(extension);
-  if (BLOCKLIST.has(ext)) {
-    return false;
-  }
+  // When a non-empty allowlist is configured, it overrides the blocklist.
   if (config.allowedExtensions.length > 0) {
     return normalizedAllowedExtensions(config).has(ext);
+  }
+  // No allowlist: blocklist applies unconditionally.
+  if (BLOCKLIST.has(ext)) {
+    return false;
   }
   return true;
 }
@@ -374,9 +382,23 @@ export async function attemptAiFallback(
       return null;
     }
 
-    if (BLOCKLIST.has(ext)) {
-      logger?.info(`ai-fallback: skipped (blocklisted) extension=${ext} size=${ctx.sizeBytes}`);
-      return null;
+    // T-11 (F-09): When a non-empty allowlist is configured, check it FIRST.
+    // Extensions in the allowlist override the default BLOCKLIST, allowing
+    // users to opt blocklisted extensions (e.g. .png, .key) into
+    // AI-extraction review. When NO allowlist is configured (empty array),
+    // the blocklist applies unconditionally.
+    if (config.allowedExtensions.length > 0) {
+      if (!normalizedAllowedExtensions(config).has(ext)) {
+        logger?.info(`ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}`);
+        return null;
+      }
+      // Extension is allowlisted — skip the default blocklist gate.
+    } else {
+      // No allowlist: enforce the blocklist unconditionally.
+      if (BLOCKLIST.has(ext)) {
+        logger?.info(`ai-fallback: skipped (blocklisted) extension=${ext} size=${ctx.sizeBytes}`);
+        return null;
+      }
     }
 
     // Magic-byte signature gate: detect renamed executables/media that
@@ -387,13 +409,6 @@ export async function attemptAiFallback(
         `ai-fallback: skipped (blocklisted signature) detected=${signatureHint} extension=${ext} size=${ctx.sizeBytes}`,
       );
       return null;
-    }
-
-    if (config.allowedExtensions.length > 0) {
-      if (!normalizedAllowedExtensions(config).has(ext)) {
-        logger?.info(`ai-fallback: skipped (not in allowedExtensions whitelist) extension=${ext}`);
-        return null;
-      }
     }
 
     const cache = deps.cache;
