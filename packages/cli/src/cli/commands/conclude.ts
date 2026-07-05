@@ -34,6 +34,7 @@ import {
   type DecisionDimensionPosition,
   type SynthesisParseResult,
 } from "../conclusion-synthesis.js";
+import { persistConclusion } from "../conclusion-store.js";
 
 import { CliUserError } from "../cli-user-error.js";
 import { formatEngineError } from "../error-mapper.js";
@@ -190,6 +191,18 @@ export function buildConcludeCommand(deps: ConcludeCommandDeps = {}): Command {
             const msg = err instanceof Error ? err.message : String(err);
             writeError(`!! engine.stop() failed during cleanup: ${msg}\n`);
           });
+        }
+
+        // Persist the synthesized conclusion into the panel's config_json so
+        // `council export` can surface the Decision Framework (T-15b). Keyed
+        // by debate id, so re-running conclude overwrites the same entry.
+        // Non-fatal: a persistence hiccup must not swallow the synthesis the
+        // user just paid for — surface a warning and still render the output.
+        try {
+          await persistConclusion(db, doc.panel.id, output);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          writeError(`!! failed to persist conclusion (continuing): ${msg}\n`);
         }
 
         if (format === "json") {

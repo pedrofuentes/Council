@@ -39,6 +39,26 @@ export interface ConcludeOutput {
   readonly warnings?: readonly string[];
 }
 
+/**
+ * Schema version for a persisted conclusion (T-15b/F-02). Stored alongside
+ * each conclusion in `panels.config_json` so a future shape change can be
+ * migrated without a DB migration. Bump when {@link ConcludeOutput} changes
+ * in a breaking way.
+ */
+export const CONCLUSION_SCHEMA_VERSION = 1;
+
+/**
+ * A conclusion persisted into a panel's `config_json`, keyed by the debate
+ * it was synthesized from. Re-running `conclude` overwrites the entry for
+ * the same `output.debateId`, so there is at most one per debate.
+ */
+export interface StoredConclusion {
+  readonly version: number;
+  /** ISO-8601 timestamp of when the conclusion was generated (not the debate start). */
+  readonly generatedAt: string;
+  readonly output: ConcludeOutput;
+}
+
 const PositionSchema = z.object({
   expert: z.string(),
   stance: z.string(),
@@ -55,6 +75,31 @@ const SynthesisSchema = z.object({
   decisionMatrix: z.array(DimensionSchema),
   recommendation: z.string(),
   confidence: z.enum(["high", "medium", "low"]),
+});
+
+/**
+ * Full {@link ConcludeOutput} schema, used to defensively validate
+ * conclusions read back from a panel's `config_json`. Unknown keys are
+ * stripped (forward-compatible); malformed entries are rejected by callers.
+ */
+export const ConcludeOutputSchema = z.object({
+  panelName: z.string(),
+  topic: z.string(),
+  debateId: z.string(),
+  startedAt: z.string(),
+  consensus: z.array(z.string()),
+  tensions: z.array(z.string()),
+  decisionMatrix: z.array(DimensionSchema),
+  recommendation: z.string(),
+  confidence: z.enum(["high", "medium", "low"]),
+  warnings: z.array(z.string()).optional(),
+});
+
+/** Schema for a {@link StoredConclusion} entry in `config_json`. */
+export const StoredConclusionSchema = z.object({
+  version: z.number(),
+  generatedAt: z.string(),
+  output: ConcludeOutputSchema,
 });
 
 export const SYNTHESIS_SYSTEM_PROMPT = `You are a deliberation synthesizer. Analyze the expert panel discussion below and produce a structured decision framework.

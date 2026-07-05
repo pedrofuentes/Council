@@ -20,6 +20,8 @@
  *     this extraction closes the synthesis half of that concern.
  */
 import type { DebateEvent, DebateEndReason, PanelMemberSnapshot } from "../core/types.js";
+import type { StoredConclusion } from "../cli/conclusion-synthesis.js";
+import { selectStoredConclusion } from "../cli/conclusion-store.js";
 
 import type { CouncilDatabase } from "./db.js";
 import type { Panel } from "./repositories/panels.js";
@@ -40,6 +42,12 @@ export interface TranscriptDocument {
     readonly endedAt: string | null;
   };
   readonly turns: readonly Turn[];
+  /**
+   * The persisted Decision Framework conclusion for this transcript's
+   * debate, when one has been synthesized (via `convene` auto-conclude or
+   * `council conclude`). Absent for legacy panels or `--no-conclude` runs.
+   */
+  readonly conclusion?: StoredConclusion;
 }
 
 /**
@@ -100,6 +108,7 @@ export async function loadTranscript(
   }
 
   const turns = await turnRepo.findByDebateId(latest.id);
+  const conclusion = selectStoredConclusion(panel.configJson, latest.id);
   return {
     panel,
     experts,
@@ -112,6 +121,7 @@ export async function loadTranscript(
       endedAt: latest.endedAt,
     },
     turns,
+    ...(conclusion !== undefined ? { conclusion } : {}),
   };
 }
 

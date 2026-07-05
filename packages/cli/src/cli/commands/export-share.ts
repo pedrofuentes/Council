@@ -26,6 +26,7 @@
  */
 import type { Turn } from "../../memory/repositories/turns.js";
 import type { TranscriptDocument } from "../../memory/transcript.js";
+import type { ConcludeOutput } from "../conclusion-synthesis.js";
 
 import {
   sanitizeExportBlockLines,
@@ -37,6 +38,7 @@ const PLACEHOLDER_PROMPT = "_Not recorded._";
 const PLACEHOLDER_ROSTER = "_No panellists recorded._";
 const PLACEHOLDER_POSITIONS = "_No expert positions recorded._";
 const PLACEHOLDER_TRANSCRIPT = "_No turns recorded._";
+const PLACEHOLDER_NONE = "_None identified._";
 
 /**
  * Render a {@link TranscriptDocument} as a shareable markdown document.
@@ -76,10 +78,10 @@ export function renderShare(doc: TranscriptDocument): string {
   //    real persisted data (not a synthesized comparison), labelled as such.
   pushSection(lines, "Panel Positions", () => renderPositions(doc));
 
-  // 5. Recommendation — Council never persists a synthesized recommendation
-  //    (`conclude` prints to stdout without saving), so say so plainly rather
-  //    than fabricating one or implying that re-exporting would fill it in.
-  pushSection(lines, "Recommendation", () => [renderRecommendationNote(doc)]);
+  // 5. Recommendation — surface the persisted Decision Framework (from
+  //    `conclude` / convene auto-conclude) when one is stored; otherwise say
+  //    plainly that no synthesis is stored rather than fabricating one.
+  pushSection(lines, "Recommendation", () => renderRecommendationBody(doc));
 
   // 6. Full transcript.
   pushSection(lines, "Transcript", () => renderTranscriptBody(doc));
@@ -102,6 +104,67 @@ function renderSubtitle(doc: TranscriptDocument): string {
     parts.push(`Concluded: ${sanitizeExportLine(doc.latestDebate.endedAt)}`);
   }
   return `_${parts.join(" · ")}_`;
+}
+
+function renderRecommendationBody(doc: TranscriptDocument): readonly string[] {
+  const conclusion = doc.conclusion;
+  if (conclusion === undefined) {
+    return [renderRecommendationNote(doc)];
+  }
+  return renderDecisionFramework(conclusion.output);
+}
+
+/**
+ * Render a persisted {@link ConcludeOutput} as the shareable Recommendation
+ * body: the recommendation prose (with confidence), then the key Consensus,
+ * Tensions and Decision Matrix. Model-derived text is sanitized and leading
+ * block markers are neutralized to prevent outline spoofing (#2123).
+ */
+function renderDecisionFramework(out: ConcludeOutput): readonly string[] {
+  const lines: string[] = [];
+  for (const para of sanitizeExportBlockLines(out.recommendation)) {
+    lines.push(escapeBlockLeadingMarkdown(para));
+  }
+  lines.push("");
+  lines.push(`_Confidence: ${sanitizeExportLine(out.confidence)}_`);
+
+  lines.push("");
+  lines.push("### Consensus");
+  lines.push("");
+  if (out.consensus.length === 0) {
+    lines.push(PLACEHOLDER_NONE);
+  } else {
+    for (const c of out.consensus)
+      lines.push(`- ${escapeBlockLeadingMarkdown(sanitizeExportLine(c))}`);
+  }
+
+  lines.push("");
+  lines.push("### Tensions");
+  lines.push("");
+  if (out.tensions.length === 0) {
+    lines.push(PLACEHOLDER_NONE);
+  } else {
+    for (const t of out.tensions)
+      lines.push(`- ${escapeBlockLeadingMarkdown(sanitizeExportLine(t))}`);
+  }
+
+  lines.push("");
+  lines.push("### Decision Matrix");
+  lines.push("");
+  if (out.decisionMatrix.length === 0) {
+    lines.push(PLACEHOLDER_NONE);
+  } else {
+    for (const d of out.decisionMatrix) {
+      lines.push(`#### ${sanitizeExportLine(d.dimension)}`);
+      lines.push("");
+      for (const p of d.positions) {
+        lines.push(`- **${sanitizeExportLine(p.expert)}:** ${sanitizeExportLine(p.stance)}`);
+      }
+      lines.push("");
+    }
+    if (lines[lines.length - 1] === "") lines.pop();
+  }
+  return lines;
 }
 
 function renderRecommendationNote(doc: TranscriptDocument): string {
