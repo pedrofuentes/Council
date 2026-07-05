@@ -108,6 +108,21 @@ describe("buildDemoCommand", () => {
     expect(text).toMatch(/council convene/i);
   });
 
+  it("shows a non-model label (not claude-sonnet-4.5) for demo experts", async () => {
+    const out = captureWriter();
+    const cmd = buildDemoCommand({ write: out.write, writeError: () => undefined });
+    cmd.exitOverride();
+
+    await cmd.parseAsync(["node", "council-demo", "--format", "plain"]);
+
+    const text = out.read();
+    // Demo should NOT show a real model ID like claude-sonnet-4.5 — it's
+    // an offline showcase with canned responses, no model is contacted.
+    expect(text).not.toContain("claude-sonnet-4.5");
+    // Instead it should show a clearly-canned label (e.g. "(demo)" or "(canned)").
+    expect(text).toMatch(/\(demo\)|\(canned\)|\(offline\)/i);
+  });
+
   it("emits machine-readable NDJSON with --format json (pure stdout)", async () => {
     const out = captureWriter();
     const cmd = buildDemoCommand({ write: out.write, writeError: () => undefined });

@@ -44,7 +44,7 @@ export const DEMO_TOPIC =
  * Cosmetic model label shown next to each persona in the transcript. No real
  * model is ever contacted — the demo runs entirely on the in-memory engine.
  */
-const DEMO_MODEL = "claude-sonnet-4.5";
+const DEMO_MODEL = "demo";
 
 /** A single round keeps the showcase short ("a few expert turns"). */
 const DEMO_MAX_ROUNDS = 1;
