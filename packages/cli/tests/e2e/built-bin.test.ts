@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -28,6 +28,11 @@ const binPath = path.join(pkgRoot, "dist", "bin", "council.js");
 const BUILD_TIMEOUT_MS = 150_000;
 const DOCTOR_TIMEOUT_MS = 45_000;
 const TIMEOUT_KILL_SIGNAL = "SIGKILL";
+
+// Once its stdout reader closes, the bundled binary should exit within a couple
+// of seconds (the broken-pipe guard calls process.exit); this ceiling only
+// guards against a hang and stays under the enclosing 60s Vitest test timeout.
+const EARLY_PIPE_CLOSE_TIMEOUT_MS = 30_000;
 
 /** Narrows an unknown catch value to Node's `ETIMEDOUT` child-process error shape. */
 function isChildProcessTimeout(error: unknown): error is NodeJS.ErrnoException {
@@ -61,6 +66,69 @@ function runChildProcess<T>(label: string, timeoutMs: number, invoke: () => T): 
   }
 }
 
+/** Result of running the bundled CLI with its stdout reader closed early. */
+interface EarlyPipeCloseResult {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly stderr: string;
+}
+
+/**
+ * Runs the bundled binary with a downstream reader that closes the read end of
+ * its stdout pipe immediately — the earliest, most deterministic form of a
+ * reader that quits early (`council … | head -1`, `council … | less` then `q`).
+ * The child's first stdout write then hits a broken pipe. Resolves with the
+ * child's exit code, terminating signal, and captured stderr so a test can
+ * assert the process ended cleanly with no unhandled `write EPIPE` stack trace.
+ * Kills the child and rejects if it fails to exit within `timeoutMs`.
+ */
+function runBundledCliWithEarlyStdoutClose(
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number = EARLY_PIPE_CLOSE_TIMEOUT_MS,
+): Promise<EarlyPipeCloseResult> {
+  return new Promise<EarlyPipeCloseResult>((resolve, reject) => {
+    const child = spawn(process.execPath, [binPath, ...args], {
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const { stdout, stderr } = child;
+    if (stdout === null || stderr === null) {
+      reject(new Error("bundled CLI was spawned without piped stdout/stderr"));
+      return;
+    }
+
+    let stderrText = "";
+    stderr.setEncoding("utf8");
+    stderr.on("data", (chunk: string) => {
+      stderrText += chunk;
+    });
+
+    // Close the read end up front so the child's first stdout write hits EPIPE.
+    // (Reading a chunk first and only then destroying races the child to
+    // completion and is flaky under FORCE_COLOR/CI timing.) Swallow the
+    // read-side error this may raise on *our* end of the pipe so the parent
+    // test process never crashes; assertions target the *child's* stderr/exit.
+    stdout.on("error", () => undefined);
+    stdout.destroy();
+
+    const killTimer = setTimeout(() => {
+      child.kill(TIMEOUT_KILL_SIGNAL);
+      reject(
+        new Error(`bundled CLI did not exit within ${timeoutMs}ms after its stdout reader closed`),
+      );
+    }, timeoutMs);
+    killTimer.unref();
+
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      clearTimeout(killTimer);
+      resolve({ code, signal, stderr: stderrText });
+    });
+  });
+}
+
 describe("bundled CLI binary", () => {
   beforeAll(() => {
     runChildProcess("`pnpm run build`", BUILD_TIMEOUT_MS, () =>
@@ -87,6 +155,29 @@ describe("bundled CLI binary", () => {
 
       expect(stdout).toContain("SQLite (node:sqlite)");
       expect(stdout).toContain("All checks passed");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("exits cleanly with no EPIPE stack trace when a piped stdout reader closes early", async () => {
+    // Piping any command's stdout to a reader that closes early (`… | head -1`,
+    // `… | less` then `q`) makes the next stdout write hit a broken pipe. Before
+    // the guard existed that surfaced as an unhandled `write EPIPE` "Unhandled
+    // 'error' event" crash (exit 1 + Node stack trace). `sessions --format
+    // plain` is a representative listing command; a fresh COUNCIL_DATA_HOME just
+    // keeps the run self-contained.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "council-epipe-"));
+    try {
+      const result = await runBundledCliWithEarlyStdoutClose(["sessions", "--format", "plain"], {
+        COUNCIL_DATA_HOME: home,
+        COUNCIL_NO_TUI: "1",
+      });
+
+      expect(result.stderr).not.toContain("EPIPE");
+      expect(result.stderr).not.toContain("Unhandled 'error' event");
+      expect(result.signal).toBeNull();
+      expect(result.code).toBe(0);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
