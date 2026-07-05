@@ -67,7 +67,9 @@ interface PatternCategory {
 export const CATEGORY_SCAN_LIMIT = 8192;
 
 /**
- * Bound the text handed to the sensitive-category regexes to a safe prefix.
+ * Bound the text handed to the sensitive-category regexes (and to
+ * {@link detectShellExpansion}, which shares the same cost concern and
+ * trade-off) to a safe prefix.
  *
  * Slicing the RAW input *before* `.trim()`/NFKC normalization caps the cost of
  * both the normalize and the super-linear `.*` category scan. A no-op for input
@@ -230,6 +232,7 @@ function wordsBetween(text: string, from: number, to: number): number {
 }
 
 function looksLikeCurrencyResidue(normalized: string): boolean {
+  // In index order, courtesy of matchAll.
   const keywords = [...normalized.matchAll(MONEY_CONTEXT_PATTERN)];
   if (keywords.length === 0) {
     return false;
@@ -238,15 +241,32 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
     ...normalized.matchAll(BARE_MAGNITUDE_RESIDUE_PATTERN),
     ...normalized.matchAll(BARE_RATE_RESIDUE_PATTERN),
   ];
-  return residues.some((residue) =>
-    keywords.some((keyword) =>
-      keyword.index <= residue.index
-        ? wordsBetween(normalized, keyword.index + keyword[0].length, residue.index) <=
-          MAX_WORDS_KEYWORD_BEFORE_RESIDUE
-        : wordsBetween(normalized, residue.index + residue[0].length, keyword.index) <=
-          MAX_WORDS_KEYWORD_AFTER_RESIDUE,
-    ),
-  );
+  // Per residue, only the NEAREST keyword on each side can matter: a farther
+  // keyword spans a superset of the intervening text, so its word count is
+  // never smaller. Binary search keeps a token-dense adversarial arg at
+  // O(R log K) pair checks instead of the full R x K cross-product.
+  return residues.some((residue) => {
+    let lo = 0;
+    let hi = keywords.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (keywords[mid].index <= residue.index) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const before = keywords[lo - 1];
+    const after = keywords[lo];
+    return (
+      (before !== undefined &&
+        wordsBetween(normalized, before.index + before[0].length, residue.index) <=
+          MAX_WORDS_KEYWORD_BEFORE_RESIDUE) ||
+      (after !== undefined &&
+        wordsBetween(normalized, residue.index + residue[0].length, after.index) <=
+          MAX_WORDS_KEYWORD_AFTER_RESIDUE)
+    );
+  });
 }
 
 /**
@@ -255,8 +275,14 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
  * `80ᴋ`/`50ᴍ` cannot slip past the `[KMB]` residue class (#2426). Scoped
  * to the residue tier only — this layer is warn-only and advisory, so the
  * fold deliberately covers just the letters the residue patterns read.
+ *
+ * The `(?<=\d)` guard folds ONLY digit-adjacent letters: these lookalikes
+ * are ordinary letters in their own scripts (в/к are everyday Russian
+ * prepositions), and folding them everywhere would turn virtually any
+ * Cyrillic topic into lone-unit-suffix "residue" (Sentinel
+ * SR-20260705-PR2435-e1d04a45, finding 2).
  */
-const CONFUSABLE_UNIT_LETTER_PATTERN = /[ᴋᴍʙКкМмВвΚκΜΒ]/g;
+const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜΒ]/g;
 const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
   "ᴋ": "K",
   "К": "K",
@@ -308,9 +334,16 @@ function foldConfusableUnitLetters(text: string): string {
  * Does NOT warn on intact currency/number literals like `$50`, `$450/mo`,
  * `$180K`, `$2M` where the `$` is followed by 2+ digits — these are intact
  * values that survived shell expansion.
+ *
+ * Like the category scan, reads only the first {@link CATEGORY_SCAN_LIMIT}
+ * characters: a CLI positional can be ARG_MAX-sized, and the proximity gate
+ * walks keyword/residue match lists, so the input must be bounded for the
+ * cost to stay O(1) in oversized-input terms. Signals that begin only after
+ * the cap are sacrificed — same advisory-layer trade-off as
+ * {@link boundCategoryScanText}.
  */
 export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
-  const normalized = topic.trim().normalize("NFKC");
+  const normalized = boundCategoryScanText(topic).trim().normalize("NFKC");
 
   // Survivor signals — meaningful for every source.
   if (SHELL_VAR_PATTERN.test(normalized) || SHELL_POSITIONAL_PATTERN.test(normalized)) {
