@@ -165,10 +165,20 @@ describe("attemptAiFallback — allowedExtensions whitelist", () => {
     expect(result).not.toBeNull();
   });
 
-  it("blocklist takes precedence over allowedExtensions", async () => {
+  it("allowlist overrides blocklist when extension is explicitly allowed (T-11)", async () => {
+    // After T-11: allowedExtensions overrides the default blocklist, so .png
+    // listed in allowedExtensions is eligible for AI extraction.
+    const result = await attemptAiFallback(makeCtx(Buffer.from("data"), ".png"), {
+      mode: "auto",
+      allowedExtensions: [".png"],
+    });
+    expect(result).not.toBeNull();
+  });
+
+  it("blocklisted extension still rejected when NOT in a non-empty allowlist", async () => {
     const result = await attemptAiFallback(makeCtx(Buffer.from("data"), ".exe"), {
       mode: "auto",
-      allowedExtensions: [".exe"],
+      allowedExtensions: [".key"],
     });
     expect(result).toBeNull();
   });
@@ -215,8 +225,14 @@ describe("isExtensionAiEligible (T4)", () => {
     expect(isExtensionAiEligible(".key", cfg)).toBe(false);
   });
 
-  it("blocklist takes precedence over a non-empty allowlist", () => {
-    const cfg: AiFallbackConfig = { mode: "ask", allowedExtensions: [".png"] };
+  it("allowlist overrides blocklist when extension is explicitly allowed (T-11)", () => {
+    const cfg: AiFallbackConfig = { mode: "ask", allowedExtensions: [".png", ".key"] };
+    expect(isExtensionAiEligible(".png", cfg)).toBe(true);
+    expect(isExtensionAiEligible(".key", cfg)).toBe(true);
+  });
+
+  it("blocklisted extension still rejected when NOT in a non-empty allowlist", () => {
+    const cfg: AiFallbackConfig = { mode: "ask", allowedExtensions: [".key"] };
     expect(isExtensionAiEligible(".png", cfg)).toBe(false);
   });
 });
