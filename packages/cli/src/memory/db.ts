@@ -513,6 +513,21 @@ ALTER TABLE expert_documents_new RENAME TO expert_documents;
 CREATE INDEX IF NOT EXISTS idx_expert_documents_slug
   ON expert_documents (expert_slug, status);`,
     },
+    {
+      version: 3,
+      name: "003_drop_redundant_chat_turns_index",
+      sql: `\
+-- Migration 003 (#320): drop the redundant idx_chat_turns_chat_seq index.
+-- chat_turns declares UNIQUE (chat_id, seq) (migration 001), which SQLite
+-- backs with an implicit covering index on (chat_id, seq). The separate
+-- explicit CREATE INDEX idx_chat_turns_chat_seq duplicates that covering
+-- index at extra storage and write cost on the chat-turn hot path, so it is
+-- redundant. Dropping it leaves the UNIQUE constraint (and its implicit
+-- index) intact, so ordered reads on (chat_id, seq) are unaffected. IF EXISTS
+-- keeps it a no-op on any database that never had the explicit index; the
+-- runner gates it by schema_version so it runs exactly once per database.
+DROP INDEX IF EXISTS idx_chat_turns_chat_seq;`,
+    },
   ];
 }
 

@@ -1,0 +1,17 @@
+-- Migration 003 (#320): drop the redundant idx_chat_turns_chat_seq index.
+--
+-- chat_turns declares UNIQUE (chat_id, seq) (migration 001), which SQLite backs
+-- with an implicit covering index on (chat_id, seq). The separate explicit
+-- CREATE INDEX idx_chat_turns_chat_seq therefore duplicates that covering index
+-- at extra storage and write cost on the chat-turn hot path, so it is
+-- redundant. Dropping it leaves the UNIQUE constraint (and its implicit index)
+-- intact, so ordered reads on (chat_id, seq) are unaffected.
+--
+-- The runner (applyMigrations in db.ts) gates this by schema_version and wraps
+-- it in BEGIN IMMEDIATE/COMMIT, so it runs exactly once per database. IF EXISTS
+-- keeps it a safe no-op on any database that never had the explicit index.
+--
+-- Note: the executed copy of this migration is the inlined string in
+-- src/memory/db.ts (loadMigrations); this .sql file is the canonical,
+-- git-diffable source of record and is not read at runtime.
+DROP INDEX IF EXISTS idx_chat_turns_chat_seq;
