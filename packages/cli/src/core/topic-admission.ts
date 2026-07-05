@@ -67,7 +67,9 @@ interface PatternCategory {
 export const CATEGORY_SCAN_LIMIT = 8192;
 
 /**
- * Bound the text handed to the sensitive-category regexes to a safe prefix.
+ * Bound the text handed to the sensitive-category regexes (and to
+ * {@link detectShellExpansion}, which shares the same cost concern and
+ * trade-off) to a safe prefix.
  *
  * Slicing the RAW input *before* `.trim()`/NFKC normalization caps the cost of
  * both the normalize and the super-linear `.*` category scan. A no-op for input
@@ -172,37 +174,134 @@ const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/;
  * The residue signature is a bare number carrying a currency-shaped
  * suffix with no `$` in front:
  *
- *   - magnitude: `80K`, `2M`, `1,500K`, `2.5B`
+ *   - magnitude: `80K`, `2M`, `1,500K`, `2.5B` — case-insensitive, since
+ *     lowercase shorthand (`$80k` → `80k`) is just as common (#2425)
  *   - per-period rate: `50/mo`, `450/month`, `99/yr`
  *
- * The negative lookbehind `(?<![$\d,.])` anchors the match at the true
- * start of the number and rejects every position inside an intact literal
- * like `$180K` or `$450/mo`, preserving the currency-literal guarantee
- * from PR #1022. Longer period alternatives come first so `/month` is
- * never half-matched as `/mo`.
+ * The negative lookbehind `(?<![$\d,.A-Za-z])` anchors the match at the
+ * true start of the number: `$`/digit/`,`/`.` reject every position inside
+ * an intact literal like `$180K` or `$450/mo` (preserving the
+ * currency-literal guarantee from PR #1022), and a letter rejects
+ * alphanumeric codes like `Q2M` (#2426). Longer period alternatives come
+ * first so `/month` is never half-matched as `/mo`.
  *
  * A bare number alone is weak evidence — "10K race" and "4K monitor" are
- * legitimate topics — so these patterns only count as residue when the
- * topic also mentions money (see {@link MONEY_CONTEXT_PATTERN}). Both
- * are ARG-ONLY, like every other residue signal.
+ * legitimate topics — so these patterns only count as residue when a money
+ * keyword appears NEAR the match (see {@link looksLikeCurrencyResidue}).
+ * Both are ARG-ONLY, like every other residue signal.
+ *
+ * The `g` flag is for `matchAll` (which requires it); never reuse these
+ * with the stateful `.test()`/`.exec()`.
  */
-const BARE_MAGNITUDE_RESIDUE_PATTERN = /(?<![$\d,.])\d[\d,]*(?:\.\d+)?[KMB]\b/;
+const BARE_MAGNITUDE_RESIDUE_PATTERN = /(?<![$\d,.A-Za-z])\d[\d,]*(?:\.\d+)?[KMB]\b/gi;
 const BARE_RATE_RESIDUE_PATTERN =
-  /(?<![$\d,.])\d[\d,]*(?:\.\d+)?\/(?:month|mo|year|yr|week|wk|hour|hr|day)s?\b/i;
+  /(?<![$\d,.A-Za-z])\d[\d,]*(?:\.\d+)?\/(?:month|mo|year|yr|week|wk|hour|hr|day)s?\b/gi;
 
 /**
  * Money-context gate for the bare magnitude/rate residue signals: only a
  * topic that is plainly about money makes a bare `80K` or `50/mo` read as
  * a mangled currency amount rather than a distance, resolution, or count.
+ *
+ * The hyphen guards keep compound adjectives ("budget-friendly 4K TV",
+ * "cost-effective", "low-budget") from counting as money context — there
+ * the keyword describes a product, not an amount (#2424). `g` flag for
+ * `matchAll`; never reuse with `.test()`.
  */
 const MONEY_CONTEXT_PATTERN =
-  /\b(?:budget|cost|price|pricing|revenue|arpu|mrr|arr|salary|salaries|funding|runway|raise|spend|spending|payment|fee|fees|invoice|dollars?|usd)\b/i;
+  /(?<!-)\b(?:budget|cost|price|pricing|revenue|arpu|mrr|arr|salary|salaries|funding|runway|raise|spend|spending|payment|fee|fees|invoice|dollars?|usd)\b(?!-)/gi;
+
+/**
+ * Proximity windows between a money keyword and a residue token, in
+ * intervening whitespace-separated words (#2424). Mere co-occurrence
+ * anywhere in the topic is NOT money context: "Should we upgrade to a 4K
+ * monitor within our budget?" pairs an unrelated resolution token with a
+ * far-away keyword and must not warn.
+ *
+ * Asymmetric on purpose — money phrasing runs longer in the keyword-first
+ * direction ("budget is set at 80K": 3 between) than in the amount-first
+ * direction ("80K in the budget": 2 between), while 3 words after already
+ * reintroduces the "4K monitor within our budget" false positive.
+ */
+const MAX_WORDS_KEYWORD_BEFORE_RESIDUE = 3;
+const MAX_WORDS_KEYWORD_AFTER_RESIDUE = 2;
+
+/** Count whitespace-separated words strictly between two match spans. */
+function wordsBetween(text: string, from: number, to: number): number {
+  const between = text.slice(from, to).trim();
+  return between.length === 0 ? 0 : between.split(/\s+/).length;
+}
 
 function looksLikeCurrencyResidue(normalized: string): boolean {
-  return (
-    MONEY_CONTEXT_PATTERN.test(normalized) &&
-    (BARE_MAGNITUDE_RESIDUE_PATTERN.test(normalized) || BARE_RATE_RESIDUE_PATTERN.test(normalized))
-  );
+  // In index order, courtesy of matchAll.
+  const keywords = [...normalized.matchAll(MONEY_CONTEXT_PATTERN)];
+  if (keywords.length === 0) {
+    return false;
+  }
+  const residues = [
+    ...normalized.matchAll(BARE_MAGNITUDE_RESIDUE_PATTERN),
+    ...normalized.matchAll(BARE_RATE_RESIDUE_PATTERN),
+  ];
+  // Per residue, only the NEAREST keyword on each side can matter: a farther
+  // keyword spans a superset of the intervening text, so its word count is
+  // never smaller. Binary search keeps a token-dense adversarial arg at
+  // O(R log K) pair checks instead of the full R x K cross-product.
+  return residues.some((residue) => {
+    let lo = 0;
+    let hi = keywords.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const candidate = keywords[mid];
+      if (candidate !== undefined && candidate.index <= residue.index) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const before = keywords[lo - 1];
+    const after = keywords[lo];
+    return (
+      (before !== undefined &&
+        wordsBetween(normalized, before.index + before[0].length, residue.index) <=
+          MAX_WORDS_KEYWORD_BEFORE_RESIDUE) ||
+      (after !== undefined &&
+        wordsBetween(normalized, residue.index + residue[0].length, after.index) <=
+          MAX_WORDS_KEYWORD_AFTER_RESIDUE)
+    );
+  });
+}
+
+/**
+ * Confusable unit letters that survive NFKC (which folds fullwidth `Ｋ`
+ * but not small-caps or Cyrillic/Greek lookalikes), folded to ASCII so
+ * `80ᴋ`/`50ᴍ` cannot slip past the `[KMB]` residue class (#2426). Scoped
+ * to the residue tier only — this layer is warn-only and advisory, so the
+ * fold deliberately covers just the letters the residue patterns read.
+ *
+ * The `(?<=\d)` guard folds ONLY digit-adjacent letters: these lookalikes
+ * are ordinary letters in their own scripts (в/к are everyday Russian
+ * prepositions), and folding them everywhere would turn virtually any
+ * Cyrillic topic into lone-unit-suffix "residue" (Sentinel
+ * SR-20260705-PR2435-e1d04a45, finding 2).
+ */
+const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜΒ]/g;
+const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
+  "ᴋ": "K",
+  "К": "K",
+  "к": "K",
+  "Κ": "K",
+  "κ": "K",
+  "ᴍ": "M",
+  "М": "M",
+  "м": "M",
+  "Μ": "M",
+  "ʙ": "B",
+  "В": "B",
+  "в": "B",
+  "Β": "B",
+};
+
+function foldConfusableUnitLetters(text: string): string {
+  return text.replace(CONFUSABLE_UNIT_LETTER_PATTERN, (ch) => CONFUSABLE_UNIT_LETTER_FOLD[ch] ?? ch);
 }
 
 /**
@@ -227,16 +326,25 @@ function looksLikeCurrencyResidue(normalized: string): boolean {
  *        - exactly one character (e.g. a lone trailing unit suffix);
  *        - multiple consecutive internal spaces;
  *        - a lone `K`/`M`/`B`/`G` unit suffix after a space;
- *        - a bare magnitude/rate number (`80K`, `50/mo`) with no `$`, in a
- *          money-context topic — the bash positional-expansion residue of
- *          `$180K` / `$450/mo` (#2379).
+ *        - a bare magnitude/rate number (`80K`, `80k`, `50/mo`) with no `$`
+ *          and a money keyword within a few words of it — the bash
+ *          positional-expansion residue of `$180K` / `$450/mo` (#2379,
+ *          proximity-gated per #2424). Unit-letter confusables are folded
+ *          to ASCII first (#2426).
  *
  * Does NOT warn on intact currency/number literals like `$50`, `$450/mo`,
  * `$180K`, `$2M` where the `$` is followed by 2+ digits — these are intact
  * values that survived shell expansion.
+ *
+ * Like the category scan, reads only the first {@link CATEGORY_SCAN_LIMIT}
+ * characters: a CLI positional can be ARG_MAX-sized, and the proximity gate
+ * walks keyword/residue match lists, so the input must be bounded for the
+ * cost to stay O(1) in oversized-input terms. Signals that begin only after
+ * the cap are sacrificed — same advisory-layer trade-off as
+ * {@link boundCategoryScanText}.
  */
 export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
-  const normalized = topic.trim().normalize("NFKC");
+  const normalized = boundCategoryScanText(topic).trim().normalize("NFKC");
 
   // Survivor signals — meaningful for every source.
   if (SHELL_VAR_PATTERN.test(normalized) || SHELL_POSITIONAL_PATTERN.test(normalized)) {
@@ -248,12 +356,13 @@ export function detectShellExpansion(topic: string, source: TopicSource = "arg")
     return false;
   }
 
+  const folded = foldConfusableUnitLetters(normalized);
   return (
     normalized.length === 0 ||
     looksLikeExpansionArtifact(normalized) ||
     MULTI_SPACE_RESIDUE_PATTERN.test(normalized) ||
-    LONE_UNIT_SUFFIX_PATTERN.test(normalized) ||
-    looksLikeCurrencyResidue(normalized)
+    LONE_UNIT_SUFFIX_PATTERN.test(folded) ||
+    looksLikeCurrencyResidue(folded)
   );
 }
 

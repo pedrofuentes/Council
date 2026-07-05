@@ -10,7 +10,11 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { checkTopicAdmission, detectShellExpansion } from "../../../src/core/topic-admission.js";
+import {
+  CATEGORY_SCAN_LIMIT,
+  checkTopicAdmission,
+  detectShellExpansion,
+} from "../../../src/core/topic-admission.js";
 
 describe("checkTopicAdmission", () => {
   describe("benign topics", () => {
@@ -327,6 +331,158 @@ describe("checkTopicAdmission", () => {
     it("pins the predicate: money context is required", () => {
       expect(detectShellExpansion("Should I train for a 10K race?", "arg")).toBe(false);
       expect(detectShellExpansion("Q3 budget of 80K", "arg")).toBe(true);
+    });
+  });
+
+  /**
+   * Refinements to the #2379 currency-residue tier from Sentinel review
+   * SR-20260705-PR2387-d2f1caf4:
+   *
+   *   - #2424: the money-context gate must require PROXIMITY between the
+   *     money keyword and the residue token, not mere co-occurrence
+   *     anywhere in the topic, and compound adjectives (budget-friendly)
+   *     must not count as money context.
+   *   - #2425: lowercase magnitude shorthand (80k/2m/2.5b) is just as
+   *     common as uppercase and must be detected the same way.
+   *   - #2426: letter-adjacent codes (Q2M) must not start a magnitude
+   *     match, and confusable unit letters (small-caps/Cyrillic K M B)
+   *     must not evade detection.
+   */
+  describe("currency-residue refinements — proximity, lowercase, confusables (#2424 #2425 #2426)", () => {
+    it.each([
+      // Lowercase magnitude residue (#2425): `$80k` mangles to `80k`.
+      "We need 80k more budget",
+      "budget is 2m",
+      "Our runway is 2.5b, allegedly",
+      // Keyword AFTER the residue, within the window.
+      "Can we deliver this on an 80K budget?",
+    ])("warns on mangled currency residue as a shell arg: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      expect(result.admitted).toBe(true);
+      const joined = result.warnings.join(" | ");
+      expect(joined).toMatch(/shell expansion/i);
+      expect(joined).toMatch(/--prompt-file/);
+    });
+
+    it.each([
+      // Confusable unit letters (#2426): small-caps and Cyrillic lookalikes
+      // survive NFKC but must still read as K/M/B residue.
+      "budget is 80ᴋ", // small-caps ᴋ
+      "Our spend is 50ᴍ", // small-caps ᴍ
+      "budget is 80К", // Cyrillic К
+    ])("warns on confusable-letter magnitude residue as a shell arg: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).toMatch(/shell expansion/i);
+    });
+
+    it.each([
+      // #2424 Sentinel repros: money keyword and residue token co-occur but
+      // are NOT near each other — must not warn (nor block interactive
+      // convene behind a bogus confirm prompt).
+      "Should we upgrade to a 4K monitor within our budget?",
+      "What budget-friendly 4K TV should I buy?",
+      "We should raise server capacity to handle 10K requests/hour",
+      "Should we raise the deploy frequency to 3/week?",
+      // #2426: a letter directly before the digits means an alphanumeric
+      // code, not a mangled amount.
+      "Q2M budget review meeting",
+    ])("does NOT warn on legitimate arg topic: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+
+    it("pins the proximity window: up to 3 words between a preceding keyword and the residue", () => {
+      expect(detectShellExpansion("budget is set at 80K", "arg")).toBe(true); // 3 between
+      expect(detectShellExpansion("budget for the team is 80K", "arg")).toBe(false); // 4 between
+    });
+
+    it("pins the proximity window: up to 2 words between the residue and a following keyword", () => {
+      expect(detectShellExpansion("80K in the budget", "arg")).toBe(true); // 2 between
+      expect(detectShellExpansion("80K left in the budget", "arg")).toBe(false); // 3 between
+    });
+
+    it("pins that lowercase and uppercase magnitude residue behave identically", () => {
+      expect(detectShellExpansion("We need 80k more budget", "arg")).toBe(true);
+      expect(detectShellExpansion("We need 80K more budget", "arg")).toBe(true);
+    });
+
+    it("does NOT warn on an intact lowercase currency literal", () => {
+      const result = checkTopicAdmission("Should we afford $80k more budget?", "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+
+    it("keeps the lowercase/confusable signals arg-only", () => {
+      expect(detectShellExpansion("We need 80k more budget", "interactive")).toBe(false);
+      expect(detectShellExpansion("budget is 80ᴋ", "file")).toBe(false);
+    });
+
+    it.each([
+      // Ordinary Cyrillic topics: the prepositions в/к and В/К/М-initial words
+      // are unit-letter CONFUSABLES, but only digit-adjacent ones may fold —
+      // otherwise every Russian arg topic trips the lone-suffix residue.
+      "Инвестиции в проект",
+      "Стоит ли инвестировать в биткоин",
+      "Поездка в Москву на выходные",
+      "Куда поехать к морю",
+    ])("does NOT warn on a Cyrillic arg topic: %s", (topic) => {
+      const result = checkTopicAdmission(topic, "arg");
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
+
+    it("pins the leading-hyphen keyword guard: compound adjectives before the keyword", () => {
+      // "budget" appears only inside "low-budget"; "costs" is not a keyword.
+      expect(detectShellExpansion("low-budget setup costs 80K", "arg")).toBe(false);
+    });
+
+    it.each([
+      ["ᴋ", "small-caps kay"],
+      ["ᴍ", "small-caps em"],
+      ["ʙ", "small-caps bee"],
+      ["К", "Cyrillic capital ka"],
+      ["к", "Cyrillic small ka"],
+      ["М", "Cyrillic capital em"],
+      ["м", "Cyrillic small em"],
+      ["В", "Cyrillic capital ve"],
+      ["в", "Cyrillic small ve"],
+      ["Κ", "Greek capital kappa"],
+      ["κ", "Greek small kappa"],
+      ["Μ", "Greek capital mu"],
+      ["Β", "Greek capital beta"],
+    ])("folds every confusable unit letter when digit-adjacent: 80%s (%s)", (letter) => {
+      expect(detectShellExpansion(`budget is 80${letter}`, "arg")).toBe(true);
+    });
+  });
+
+  /**
+   * Cost bound for the residue tier (Sentinel SR-20260705-PR2435-e1d04a45,
+   * finding 1). `detectShellExpansion` runs on CLI positionals up to
+   * ARG_MAX, twice per convene/ask invocation, so it must stay cheap for
+   * adversarial token-dense input. Like the category scan, it reads only
+   * the first {@link CATEGORY_SCAN_LIMIT} characters — pinned here
+   * deterministically by slice position, not wall-clock.
+   */
+  describe("residue-tier cost bound — oversized args (#2435 Sentinel finding 1)", () => {
+    it("ignores residue that begins after the scan limit", () => {
+      const topic = "x".repeat(CATEGORY_SCAN_LIMIT) + " budget is 80K";
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("still detects residue that sits within the scan limit", () => {
+      const topic = "budget is 80K " + "x".repeat(CATEGORY_SCAN_LIMIT);
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+    });
+
+    it("handles a token-dense oversized arg without blowing up", () => {
+      // ~26K chars of interleaved keywords and residue tokens where NO pair
+      // is inside the proximity window, so nothing can short-circuit; the
+      // pre-fix cross-product needed minutes for this shape (59s at 18K
+      // chars). The vitest default 5s timeout is the (generous) bound.
+      const topic = "usd a b c d 10K e f g h ".repeat(1100);
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
     });
   });
 

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Shell-expansion warning now catches bash-mangled currency amounts** (#2379) — `council convene "ARPU is $450/mo and budget is $180K"` in bash silently loses `$4`/`$1` to positional-parameter expansion; Council now recognizes the leftover bare `80K`/`50/mo` residue near a money keyword, warns, and suggests single quotes or `--prompt-file`.
+- **Shell-expansion warning is more precise about money context** (#2424, #2425, #2426) — the currency-residue heuristic now requires the money keyword to be within a few words of the suspicious number (so "Should we upgrade to a 4K monitor within our budget?" no longer warns or blocks behind a confirm prompt), catches lowercase shorthand (`80k`, `2m`) and confusable unit letters, and no longer misreads alphanumeric codes like `Q2M`.
 - **`council sessions` now flags stale running debates with a recovery hint** (T2) — when a running debate has had no activity for more than one hour, `council sessions` now points users to `council resume <panel>` so they can recover the conversation instead of assuming it is still actively progressing.
 - **Abort path no longer shows raw engine errors** (#810) — when a debate is interrupted via Ctrl+C, `runWithEngine` now suppresses confusing `formatEngineError` diagnostic output and returns normally, allowing callers to show the user-friendly "Debate interrupted. Partial results saved." message regardless of where in the lifecycle the abort occurred.
 - **Chat summarization now times out instead of hanging indefinitely** (#330) — long-running chat summarizer calls are bounded by a default timeout and return the user to the conversation with a warning if summary generation stalls.
