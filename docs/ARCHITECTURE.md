@@ -296,6 +296,49 @@ The Zod `ExpertDefinitionSchema` in `src/core/expert.ts` carries a `superRefine`
 - Academic context: Greshake et al. "Not what you've signed up for" (indirect prompt injection); Willison "Prompt injection" series; Lakera and Microsoft Prompt Shields documentation. External ML classifiers (Lakera Guard, Prompt Guard 2 ONNX) are deferred to Phase 4 per ADR-012.
 
 
+## Document Exclusion (`excludedDocs`)
+
+`council expert docs <slug> --remove <file>` un-indexes a document without
+deleting it from disk. The removal is made durable by persisting a pattern in
+the expert definition's `excludedDocs` list (see `src/cli/commands/expert.ts`),
+which `createDocumentProcessor` (`src/core/documents/processor.ts`) reads at
+process/train time. Any scanned file matching a pattern is treated as **absent**
+by both `process()` and `needsProcessing()` — never (re)extracted, (re)indexed,
+or tracked — so it is not resurrected by `expert train --retrain` (#2467).
+
+**Matching semantics** (`isExcludedPath`), chosen per-pattern:
+
+- **Relative-path (#2399)** — a pattern containing a separator matches a file's
+  path _relative to the canonical docs root_ (`path.relative(docsRoot, absPath)`).
+  This **path-scopes** the exclusion: `2023/summary.md` excludes only that file
+  and never a same-named `2024/summary.md`.
+- **Legacy bare-basename** — a separator-free pattern matches purely on the
+  file's basename, regardless of subdirectory, preserving pre-#2399 stored
+  exclusions.
+- **Separator normalization** — `docs --remove` persists patterns in POSIX
+  (`/`) form; the processor normalizes `/` to the platform separator before
+  comparing, so a stored pattern matches whether the runtime path uses `/`
+  (POSIX) or `\` (Windows).
+
+**Zero-match observability (#2486)** — during `process()`/train, any stored
+pattern that matches **none** of the scanned files emits a warn notice through
+the processor's best-effort `onWarning` sink. A pattern goes stale when its
+target is renamed, moved, or deleted after `docs --remove`, silently turning
+the exclusion into a no-op; the notice lets the user re-issue the removal. It is
+suppressed when the docs root is absent (every pattern would trivially match
+nothing) and on the `needsProcessing()` path (no sink).
+
+**Limitations** — matching is **exact** (no globbing, wildcards, or directory-
+prefix matching). Bare-basename patterns are not path-scoped and may over-exclude
+same-named files in other subdirectories. Relative-path patterns are brittle to
+renames/moves: the exclusion silently stops applying if the file's relative path
+changes (the zero-match warning is the safety net that surfaces this).
+
+**Cross-references** — Implementation: `src/core/documents/processor.ts`
+(`isExcludedPath`, `applyExclusions`); store side: `src/cli/commands/expert.ts`
+(`docs --remove`). Tests: `tests/unit/core/documents/processor.test.ts`.
+
+
 ## Document Trust Model
 
 Council's RAG pipeline reads arbitrary user-supplied files (PDF, DOCX, XLSX, ODT, RTF, plain text, etc.) and surfaces extracted snippets to expert agents. Every byte of extracted content is **untrusted**: a document author can embed text designed to subvert the model — fake system messages, role boundaries, "ignore previous instructions" payloads, exfiltration prompts.
