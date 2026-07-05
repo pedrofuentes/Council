@@ -718,6 +718,91 @@ describe("attemptAiFallback — magic-byte blocklist gate (🔴 fix)", () => {
   });
 });
 
+// #2481: SVG detection must not be evadable by padding the <svg> root past a
+// fixed byte window. The scan must skip an ARBITRARY amount of *insignificant*
+// leading XML (whitespace, comments, the <?xml?> prolog, DOCTYPE) and still
+// classify the file as an SVG image — while staying linear/bounded (no ReDoS)
+// on the untrusted-input path and NOT misclassifying non-SVG roots.
+describe("attemptAiFallback — SVG detection tolerates >2KB leading insignificant XML (#2481)", () => {
+  // Comfortably past the historical 2048-byte scan window.
+  const PAD = 2048 + 512;
+
+  const svgConfig: AiFallbackConfig = { mode: "auto", allowedExtensions: [".svg"] };
+
+  it("detects an <svg> root preceded by >2KB of leading whitespace", async () => {
+    const padded = Buffer.concat([
+      Buffer.alloc(PAD, 0x20), // PAD spaces
+      Buffer.from('<svg width="100" height="100"></svg>'),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root preceded by a >2KB XML comment", async () => {
+    const padded = Buffer.concat([
+      Buffer.from("<!-- "),
+      Buffer.alloc(PAD, 0x61), // PAD 'a' bytes inside the comment
+      Buffer.from(" -->\n<svg></svg>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root after a >2KB prolog + comment + doctype run", async () => {
+    const padded = Buffer.concat([
+      Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n'),
+      Buffer.from("<!--"),
+      Buffer.alloc(PAD, 0x20),
+      Buffer.from("-->\n"),
+      Buffer.from(
+        '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" ' +
+          '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n',
+      ),
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root after a DOCTYPE whose internal subset contains '>' plus >2KB padding", async () => {
+    const padded = Buffer.concat([
+      Buffer.from("<!DOCTYPE svg ["),
+      // '>' characters inside the internal subset must NOT end the DOCTYPE early.
+      Buffer.from('<!ENTITY nbsp "&#160;">'),
+      Buffer.alloc(PAD, 0x20),
+      Buffer.from("]>\n"),
+      Buffer.from("<svg></svg>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("does NOT misclassify a non-SVG root after >2KB of leading padding as SVG", async () => {
+    const padded = Buffer.concat([
+      Buffer.alloc(PAD, 0x20),
+      Buffer.from("<html><body><svg></svg></body></html>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    // Root element is <html>, not <svg> → must NOT be blocked as an SVG image.
+    expect(result).not.toBeNull();
+  });
+
+  it("stays linear/bounded on a multi-megabyte adversarial leading run", async () => {
+    // ~4 MiB of leading whitespace before the <svg> root. A single linear pass
+    // completes in a few ms; catastrophic backtracking or a quadratic scan
+    // would blow well past this generous deterministic bound.
+    const padded = Buffer.concat([Buffer.alloc(4 * 1024 * 1024, 0x20), Buffer.from("<svg></svg>")]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    const elapsedMs = performance.now() - start;
+    expect(result).toBeNull(); // still detected as SVG despite the padding
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+});
+
 describe("attemptAiFallback — error resilience (#985)", () => {
   // A buffer whose helpers throw mid-extraction (e.g. corrupted Buffer):
   // subarray() raises, simulating a hash/slice failure after the gates pass.
