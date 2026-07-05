@@ -203,6 +203,65 @@ describe("topic admission integration", () => {
     expect(stderr).toMatch(/--prompt-file/);
   });
 
+  it("convene WARNS about shell expansion for lowercase bash-mangled currency residue as a shell ARG (#2425)", async () => {
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    // What bash delivers for `convene "We need $80k more budget"`: `$8`
+    // expands to nothing, leaving the lowercase magnitude residue `80k`.
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "We need 80k more budget",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+      "--yes",
+    ]);
+
+    expect(stderr).toMatch(/shell expansion/i);
+    expect(stderr).toMatch(/--prompt-file/);
+  });
+
+  it("convene emits NO warning when a money keyword merely co-occurs with an unrelated magnitude token (#2424)", async () => {
+    let stderr = "";
+    const cmd = buildConveneCommand({
+      engineFactory: makeMockEngineFactory(),
+      write: () => undefined,
+      writeError: (s) => {
+        stderr += s;
+      },
+    });
+
+    // Sentinel repro for #2424: "budget" and "4K" are both present but not
+    // near each other, so this must not warn. Runs WITHOUT --yes: in a real
+    // interactive session a false positive would additionally block behind
+    // the confirm-on-detect gate (here, non-interactive warn-and-proceed
+    // makes the false positive visible on stderr instead).
+    await cmd.parseAsync([
+      "node",
+      "council-convene",
+      "Should we upgrade to a 4K monitor within our budget?",
+      "--template",
+      "code-review",
+      "--max-rounds",
+      "1",
+      "--engine",
+      "mock",
+    ]);
+
+    expect(stderr).not.toMatch(/shell expansion/i);
+  });
+
   it("ask emits a warning for a sensitive question and still answers", async () => {
     const seed = await seedPanel(testHome);
     let stderr = "";
