@@ -151,6 +151,58 @@ describe("council docs review", () => {
     expect(stdout).toMatch(/no files need review/i);
   });
 
+  it("uses correct singular grammar for exactly one pending file (T-03/F-14)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          failed: 1,
+          files: [
+            fileDetail({
+              filename: "broken.pdf",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Should be "1 file that needs review" (singular), not "1 file that need review"
+    expect(stdout).toMatch(/1 file that needs review/);
+  });
+
+  it("uses correct plural grammar for multiple pending files (T-03/F-14)", async () => {
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          failed: 2,
+          files: [
+            fileDetail({
+              filename: "a.pdf",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+            fileDetail({
+              filename: "b.pdf",
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Should be "2 files that need review" (plural)
+    expect(stdout).toMatch(/2 files that need review/);
+  });
+
   it("lists failed files with a human-readable error reason", async () => {
     const { stdout, error } = await runDocs(
       ["review", "finance"],
