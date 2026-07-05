@@ -1497,9 +1497,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
       await seedDocRow("boss", "alpha.md", 100, "failed");
 
       const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const updateSpy = vi
         .spyOn(FileExpertLibrary.prototype, "update")
         .mockRejectedValue(new Error("disk full"));
@@ -1542,9 +1541,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
       await seedDocRow("boss", "alpha.md", 100, "processed");
 
       const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const updateSpy = vi
         .spyOn(FileExpertLibrary.prototype, "update")
         .mockRejectedValue(new Error("ORIGINAL_UPDATE_FAILURE"));
@@ -1669,9 +1667,8 @@ fs.writeFileSync(p, body, 'utf-8');`,
 
       const { createDatabase } = await import("../../../../src/memory/db.js");
       const { FileExpertLibrary } = await import("../../../../src/core/expert-library.js");
-      const { DocumentRepository } = await import(
-        "../../../../src/memory/repositories/document-repository.js"
-      );
+      const { DocumentRepository } =
+        await import("../../../../src/memory/repositories/document-repository.js");
       const db = await createDatabase(path.join(env.home, "council.db"));
       try {
         // No escaping pattern may reach the persisted definition.

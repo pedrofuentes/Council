@@ -475,7 +475,9 @@ describe.sequential("document intelligence e2e", () => {
 
     try {
       // Attempt to remove - should fail with clear error, and NOT leave document in "removed" state
-      await expect(runExpertCommand(["docs", "boss", "--remove", "will-fail.md"])).rejects.toThrow();
+      await expect(
+        runExpertCommand(["docs", "boss", "--remove", "will-fail.md"]),
+      ).rejects.toThrow();
 
       // After failure, document must still be active (not left in inconsistent "removed" state)
       const documentsAfterFailed = (await readExpertDocuments(ctx, "boss"))
@@ -522,7 +524,9 @@ describe.sequential("document intelligence e2e", () => {
             engineFactory: () => new StubEngine([buildProfileJson("Refreshed.", "Updated.")]),
           },
         ),
-      ).rejects.toThrow(/after re-adding documents.*successfully committed.*exclusion list could not be pruned/is);
+      ).rejects.toThrow(
+        /after re-adding documents.*successfully committed.*exclusion list could not be pruned/is,
+      );
     } finally {
       // Restore write permission even if an assertion above throws, so later
       // sequential tests don't inherit a read-only boss.yaml.

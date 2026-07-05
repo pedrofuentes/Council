@@ -31,7 +31,11 @@ import {
 import { createDocumentIndexer } from "../../core/documents/indexer.js";
 import { createDocumentProcessor } from "../../core/documents/processor.js";
 import { FileExpertLibrary, type ExpertLibrary } from "../../core/expert-library.js";
-import { classifyDocsPath, ExpertDefinitionSchema, type ExpertDefinition } from "../../core/expert.js";
+import {
+  classifyDocsPath,
+  ExpertDefinitionSchema,
+  type ExpertDefinition,
+} from "../../core/expert.js";
 import type { CouncilEngine } from "../../engine/index.js";
 import { createDatabase, type CouncilDatabase } from "../../memory/db.js";
 import {
