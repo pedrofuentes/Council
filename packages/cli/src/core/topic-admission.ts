@@ -90,6 +90,8 @@ interface ShellExpansionScan {
   readonly normalized: string;
   /** True iff the cap cut a token in half, manufacturing a trailing `\b`. */
   readonly suspectEdge: boolean;
+  /** True iff the input was longer than {@link CATEGORY_SCAN_LIMIT} (#2507). */
+  readonly truncated: boolean;
 }
 
 /**
@@ -115,6 +117,13 @@ interface ShellExpansionScan {
  * which `/\w/` rejects, so an untruncated input is never suspect). See
  * {@link hasNonEdgeMatch}.
  *
+ * The lookahead char is judged on its NFKC fold (#2507): all matching
+ * happens on NFKC-normalized text, so the boundary judgment must use the
+ * folded char — fullwidth `ａ` (U+FF41) folds to `a` (word char → edge
+ * suspect), while Cyrillic/Greek lookalikes stay non-`\w` (a real boundary,
+ * matching the sink patterns' ASCII `\b`). `.normalize` on a lone surrogate
+ * half returns the input unchanged, so this never throws.
+ *
  * Applies ONLY to {@link detectShellExpansion}; the category scan keeps using
  * the plain {@link boundCategoryScanText} prefix.
  */
@@ -123,25 +132,44 @@ function boundShellExpansionScanText(topic: string): ShellExpansionScan {
   const bounded = truncated ? topic.slice(0, CATEGORY_SCAN_LIMIT) : topic;
   const normalized = bounded.trim().normalize("NFKC");
   const suspectEdge =
-    truncated && !/\s$/.test(bounded) && /\w/.test(topic.charAt(CATEGORY_SCAN_LIMIT));
-  return { normalized, suspectEdge };
+    truncated &&
+    !/\s$/.test(bounded) &&
+    /\w/.test(topic.charAt(CATEGORY_SCAN_LIMIT).normalize("NFKC"));
+  return { normalized, suspectEdge, truncated };
+}
+
+/**
+ * Shared suspect-edge predicate (#2507): `true` iff `match` ends strictly
+ * BEFORE the end of the scanned text. A match ending exactly at the end may
+ * owe its trailing `\b` to the 8 KiB cut rather than to the input, so on a
+ * suspect edge callers discard it — mirroring full-text `\b` semantics: when
+ * the char past the cap is a word char, the pattern would not have matched
+ * there in the untruncated string. Used by {@link hasNonEdgeMatch} and by
+ * both the keyword and residue filters in {@link looksLikeCurrencyResidue},
+ * so the three sites cannot drift.
+ */
+function isNonEdgeMatch(match: RegExpExecArray, textLength: number): boolean {
+  return match.index + match[0].length < textLength;
 }
 
 /**
  * Match-existence check honouring the artificial-edge guard: when
  * `suspectEdge` is false, any match counts; when true, only a match ending
- * strictly BEFORE the end of `text` counts — a match ending exactly at the
- * end may owe its trailing `\b` to the 8 KiB cut rather than to the input
+ * strictly BEFORE the end of `text` counts — see {@link isNonEdgeMatch}
  * (#2482).
  *
- * `pattern` MUST carry the `g` flag: `matchAll` requires it (and clones the
- * regex, so no `lastIndex` state leaks between calls). The iterator is lazy,
- * so on a clean edge this is as cheap as `.test()` — it stops at the first
+ * `pattern` MUST carry the `g` flag: `matchAll` requires it. `matchAll`
+ * clones the regex, but the clone STARTS from the original's current
+ * `lastIndex` (#2507) — hence the reset below, which makes this helper
+ * self-defending against a stateful `.test()`/`.exec()` call site elsewhere
+ * instead of relying on comment discipline alone. The iterator is lazy, so
+ * on a clean edge this is as cheap as `.test()` — it stops at the first
  * match.
  */
 function hasNonEdgeMatch(pattern: RegExp, text: string, suspectEdge: boolean): boolean {
+  pattern.lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
-    if (!suspectEdge || match.index + match[0].length < text.length) {
+    if (!suspectEdge || isNonEdgeMatch(match, text.length)) {
       return true;
     }
   }
@@ -315,8 +343,13 @@ const MAX_WORDS_KEYWORD_AFTER_RESIDUE = 2;
  * {@link wordsWithin} call at O(128) and makes the cost property
  * semantically testable (dropping the cap flips a far-keyword fixture's
  * outcome instead of just its timing).
+ *
+ * Exported (like {@link CATEGORY_SCAN_LIMIT}) so boundary tests derive
+ * their gap fixtures from the cap instead of magic repeat counts — a future
+ * cap change then fails loudly instead of silently invalidating fixture
+ * intent (#2507).
  */
-const MAX_PROXIMITY_SCAN_CHARS = 128;
+export const MAX_PROXIMITY_SCAN_CHARS = 128;
 
 /**
  * Fallback whitespace test for non-ASCII code points. JS `\s` also covers
@@ -378,8 +411,23 @@ function wordsWithin(text: string, from: number, to: number, max: number): boole
 }
 
 function looksLikeCurrencyResidue(normalized: string, suspectEdge: boolean): boolean {
-  // In index order, courtesy of matchAll.
-  const keywords = [...normalized.matchAll(MONEY_CONTEXT_PATTERN)];
+  // In index order, courtesy of matchAll (`filter` preserves that order,
+  // which the binary search below relies on). On a suspect edge (#2505), a
+  // keyword match ending exactly at the end of the bounded text may owe its
+  // trailing `\b` to the 8 KiB cut — verified repro: a slice ending
+  // `… 80K in budget` with `ary plans` continuing past the cap. "budgetary"
+  // is not a money keyword, so the bisected fragment must not count as money
+  // context; discarding an edge keyword mirrors full-text `\b` semantics
+  // exactly as for residues.
+  //
+  // Same `lastIndex` self-defense as {@link hasNonEdgeMatch} (#2507):
+  // `matchAll` clones the regex but seeds the clone from the original's
+  // current `lastIndex`, so each shared `g` pattern is reset before use
+  // rather than trusting comment discipline at other call sites.
+  MONEY_CONTEXT_PATTERN.lastIndex = 0;
+  const keywords = [...normalized.matchAll(MONEY_CONTEXT_PATTERN)].filter(
+    (keyword) => !suspectEdge || isNonEdgeMatch(keyword, normalized.length),
+  );
   if (keywords.length === 0) {
     return false;
   }
@@ -388,10 +436,12 @@ function looksLikeCurrencyResidue(normalized: string, suspectEdge: boolean): boo
   // `…$1,500KB` bisected after the `K` reads as bare `500K`), so it is
   // excluded. Safe on the folded text: the confusable fold is a 1:1 char
   // replacement, so match indices and lengths are unaffected by it.
+  BARE_MAGNITUDE_RESIDUE_PATTERN.lastIndex = 0;
+  BARE_RATE_RESIDUE_PATTERN.lastIndex = 0;
   const residues = [
     ...normalized.matchAll(BARE_MAGNITUDE_RESIDUE_PATTERN),
     ...normalized.matchAll(BARE_RATE_RESIDUE_PATTERN),
-  ].filter((residue) => !suspectEdge || residue.index + residue[0].length < normalized.length);
+  ].filter((residue) => !suspectEdge || isNonEdgeMatch(residue, normalized.length));
   // Per residue, only the NEAREST keyword on each side can matter: a farther
   // keyword spans a superset of the intervening text, so its word count is
   // never smaller. Binary search keeps a token-dense adversarial arg at
@@ -447,25 +497,28 @@ function looksLikeCurrencyResidue(normalized: string, suspectEdge: boolean): boo
  */
 const CONFUSABLE_UNIT_LETTER_PATTERN = /(?<=\d)[ᴋᴍʙКкМмВвΚκΜμΒβ]/g;
 const CONFUSABLE_UNIT_LETTER_FOLD: Readonly<Record<string, string>> = {
-  "ᴋ": "K",
-  "К": "K",
-  "к": "K",
-  "Κ": "K",
-  "κ": "K",
-  "ᴍ": "M",
-  "М": "M",
-  "м": "M",
-  "Μ": "M",
-  "μ": "M",
-  "ʙ": "B",
-  "В": "B",
-  "в": "B",
-  "Β": "B",
-  "β": "B",
+  ᴋ: "K",
+  К: "K",
+  к: "K",
+  Κ: "K",
+  κ: "K",
+  ᴍ: "M",
+  М: "M",
+  м: "M",
+  Μ: "M",
+  μ: "M",
+  ʙ: "B",
+  В: "B",
+  в: "B",
+  Β: "B",
+  β: "B",
 };
 
 function foldConfusableUnitLetters(text: string): string {
-  return text.replace(CONFUSABLE_UNIT_LETTER_PATTERN, (ch) => CONFUSABLE_UNIT_LETTER_FOLD[ch] ?? ch);
+  return text.replace(
+    CONFUSABLE_UNIT_LETTER_PATTERN,
+    (ch) => CONFUSABLE_UNIT_LETTER_FOLD[ch] ?? ch,
+  );
 }
 
 /**
@@ -488,6 +541,11 @@ function foldConfusableUnitLetters(text: string): string {
  *      would be pure false positives.
  *        - empty after trimming (the whole topic expanded away);
  *        - exactly one character (e.g. a lone trailing unit suffix);
+ *          — both emptiness artifacts apply only when the input was NOT
+ *          truncated (#2507): a topic longer than the 8 KiB cap is by
+ *          definition not an empty or one-char argument, so an
+ *          all-whitespace scan window (pathological leading whitespace
+ *          before real content) must not manufacture them;
  *        - multiple consecutive internal spaces;
  *        - a lone `K`/`M`/`B`/`G` unit suffix after a space;
  *        - a bare magnitude/rate number (`80K`, `80k`, `50/mo`) with no `$`
@@ -514,8 +572,9 @@ function foldConfusableUnitLetters(text: string): string {
  * word char immediately past the cap). On such a suspect edge, matches ending
  * exactly at the slice edge are discarded for the patterns whose match can
  * end at an end-anchored `\b` — the `$1` positional survivor, the lone unit
- * suffix, and the bare magnitude/rate residues — so the cap slicing through
- * an intact `$180K` cannot manufacture a phantom `$1` survivor on input that
+ * suffix, the bare magnitude/rate residues, and the money-context keywords
+ * (#2505) — so the cap slicing through an intact `$180K` cannot manufacture
+ * a phantom `$1` survivor on input that
  * never touched a shell (#2453), while genuine pre-cap matches keep warning
  * even inside one long unbroken run and nothing is ever trimmed into an
  * empty/one-char residue artifact (#2482). `$VAR` and the multi-space residue
@@ -523,7 +582,7 @@ function foldConfusableUnitLetters(text: string): string {
  * are matched unguarded.
  */
 export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
-  const { normalized, suspectEdge } = boundShellExpansionScanText(topic);
+  const { normalized, suspectEdge, truncated } = boundShellExpansionScanText(topic);
 
   // Survivor signals — meaningful for every source.
   if (
@@ -539,9 +598,12 @@ export function detectShellExpansion(topic: string, source: TopicSource = "arg")
   }
 
   const folded = foldConfusableUnitLetters(normalized);
+  // The emptiness artifacts are gated on non-truncation (#2507): a >8 KiB
+  // topic cannot be an empty/one-char argument, so a scan window that trims
+  // to ""/one char only reflects pathological leading whitespace, not
+  // shell mangling. Untruncated behaviour is unchanged.
   return (
-    normalized.length === 0 ||
-    looksLikeExpansionArtifact(normalized) ||
+    (!truncated && (normalized.length === 0 || looksLikeExpansionArtifact(normalized))) ||
     MULTI_SPACE_RESIDUE_PATTERN.test(normalized) ||
     hasNonEdgeMatch(LONE_UNIT_SUFFIX_PATTERN, folded, suspectEdge) ||
     looksLikeCurrencyResidue(folded, suspectEdge)

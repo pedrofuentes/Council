@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CATEGORY_SCAN_LIMIT,
+  MAX_PROXIMITY_SCAN_CHARS,
   checkTopicAdmission,
   detectShellExpansion,
 } from "../../../src/core/topic-admission.js";
@@ -195,15 +196,12 @@ describe("checkTopicAdmission", () => {
       "Budget proposal: $2M for infrastructure",
       "$999.99 pricing strategy",
       "Compare $50 vs €45 pricing",
-    ])(
-      "does NOT warn on intact currency/number literal in: %s",
-      (topic) => {
-        const result = checkTopicAdmission(topic);
-        expect(result.admitted).toBe(true);
-        const joined = result.warnings.join(" | ");
-        expect(joined).not.toMatch(/shell expansion/i);
-      },
-    );
+    ])("does NOT warn on intact currency/number literal in: %s", (topic) => {
+      const result = checkTopicAdmission(topic);
+      expect(result.admitted).toBe(true);
+      const joined = result.warnings.join(" | ");
+      expect(joined).not.toMatch(/shell expansion/i);
+    });
 
     it("still warns when there is genuine evidence of mangling (single-char artifact)", () => {
       const result = checkTopicAdmission("K");
@@ -535,13 +533,19 @@ describe("checkTopicAdmission", () => {
       expect(detectShellExpansion(topic, "arg")).toBe(false);
     });
 
-    it("pins the 128-char cap boundary: identical word count, gap 128 → context, gap 129 → not", () => {
+    it("pins the cap boundary: identical word count, gap at the cap → context, one past → not", () => {
       // Both shapes have exactly 2 intervening words (≤3-word window is
       // satisfied); only the character distance between the end of the
       // keyword match ("budget", ends at index 6) and the start of the
-      // residue ("80K") differs: 128 (at the cap) vs 129 (past it).
-      const under = "budget " + "x".repeat(63) + " " + "x".repeat(62) + " 80K";
-      const over = "budget " + "x".repeat(63) + " " + "x".repeat(63) + " 80K";
+      // residue ("80K") differs: exactly MAX_PROXIMITY_SCAN_CHARS (at the
+      // cap) vs one char past it. The gap is space + firstToken + space +
+      // secondToken + space, i.e. first + second + 3 chars — derived from
+      // the exported cap so a future cap change re-derives the fixtures
+      // loudly instead of silently invalidating their intent (#2507).
+      const first = Math.ceil((MAX_PROXIMITY_SCAN_CHARS - 3) / 2);
+      const second = MAX_PROXIMITY_SCAN_CHARS - 3 - first;
+      const under = "budget " + "x".repeat(first) + " " + "x".repeat(second) + " 80K";
+      const over = "budget " + "x".repeat(first) + " " + "x".repeat(second + 1) + " 80K";
       expect(detectShellExpansion(under, "arg")).toBe(true);
       expect(detectShellExpansion(over, "arg")).toBe(false);
     });
@@ -549,9 +553,12 @@ describe("checkTopicAdmission", () => {
     it("handles a sparse-keyword long-token arg without blowing up (adversarial cost shape)", () => {
       // One early money keyword, several ~1000-char unbroken filler tokens,
       // then many short bare-magnitude residues: every residue's nearest
-      // keyword is thousands of characters away, so each proximity check
-      // must short-circuit on the character cap instead of walking the
-      // full gap per residue.
+      // keyword is thousands of characters away. Belt and braces (#2507):
+      // the word-count short-circuit alone already keeps this fixture cheap
+      // (mutation-verified — removing the character cap leaves this test
+      // green), so the elapsed-time bound here is a coarse safety net; the
+      // character cap's SEMANTICS are pinned by the two fixtures above,
+      // which flip outcome (not just timing) when the cap is dropped.
       const topic = "usd " + ("f".repeat(1000) + " ").repeat(6) + "10K ".repeat(400);
       const start = performance.now();
       const result = detectShellExpansion(topic, "arg");
@@ -690,6 +697,145 @@ describe("checkTopicAdmission", () => {
       expect(topic.charAt(CATEGORY_SCAN_LIMIT - 1)).toBe("$");
       expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe("V");
       expect(detectShellExpansion(topic, "file")).toBe(false);
+    });
+  });
+
+  /**
+   * Keyword-tier edge guard (#2505).
+   *
+   * PR #2504's artificial-edge guard filtered end-anchored matches for the
+   * `$1` positional survivor, the lone unit suffix, and the bare
+   * magnitude/rate residues — but NOT for the money-context keywords, whose
+   * matches also end in a manufacturable trailing `\b`. A money keyword
+   * bisected exactly at the 8 KiB cap (`budgetary` cut after `budget`)
+   * therefore still counted as money context for a genuine in-cap residue,
+   * manufacturing a phantom currency-residue warning (and, via convene's
+   * arg gate, a default-abort confirm prompt) on input that never touched
+   * a shell.
+   */
+  describe("money keyword bisected at the 8 KiB cap (#2505)", () => {
+    // Sized so the 8,192-char slice ends exactly `… 80K in budget` with the
+    // continuation controlled per fixture: "a ".repeat(4088) + "aa " is
+    // 8,179 chars, and "80K in budget" fills indices 8,179-8,191.
+    const filler = "a ".repeat(4088) + "aa ";
+
+    it("does NOT count a keyword bisected at the cap as money context ('budget' cut out of 'budgetary')", () => {
+      const topic = `${filler}80K in budgetary plans for the next fiscal quarter`;
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 13, CATEGORY_SCAN_LIMIT)).toBe("80K in budget");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe("a");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("still counts a genuine keyword ending exactly at the cap when whitespace follows (real boundary)", () => {
+      const topic = `${filler}80K in budget and the topic continues past the cap`;
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 13, CATEGORY_SCAN_LIMIT)).toBe("80K in budget");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe(" ");
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+    });
+
+    it("still counts a genuine keyword at the end of an exactly-8 KiB untruncated topic", () => {
+      const topic = `${filler}80K in budget`;
+      expect(topic.length).toBe(CATEGORY_SCAN_LIMIT);
+      expect(detectShellExpansion(topic, "arg")).toBe(true);
+    });
+  });
+
+  /**
+   * Edge-guard hardening (#2507, Sentinel minors digest for PR #2504).
+   *
+   *   - Item 1: the suspect-edge classifier judged the char past the cap
+   *     RAW with ASCII-only `\w`, but all matching happens on
+   *     NFKC-normalized text — a fullwidth word char (`ａ` → `a`) at index
+   *     8192 must make the edge suspect.
+   *   - Item 2: an all-whitespace scan window normalizes the slice to ""
+   *     and fired the empty-topic residue signal — but a topic longer than
+   *     the cap is by definition not an empty or one-char argument.
+   */
+  describe("edge-guard hardening — NFKC edge lookahead, truncated emptiness artifacts (#2507)", () => {
+    it("treats a fullwidth word char past the cap as a suspect edge (ａ folds to a), for any source", () => {
+      // `$` at 8190, `1` at 8191, fullwidth `ａ` (U+FF41) at 8192: the
+      // bisected `$1ａ…` token must not read as a `$1` survivor.
+      const topic = "a ".repeat(4095) + "$1ａnd the topic continues past the cap";
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 2, CATEGORY_SCAN_LIMIT)).toBe("$1");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe("ａ");
+      for (const source of ["arg", "interactive", "file"] as const) {
+        expect(detectShellExpansion(topic, source)).toBe(false);
+      }
+    });
+
+    it("does NOT manufacture an empty-topic artifact from an all-whitespace scan window", () => {
+      // ≥8 KiB of leading whitespace before real content: the bounded slice
+      // trims to "", but the >8 KiB topic is plainly not an empty argument.
+      const topic = " ".repeat(CATEGORY_SCAN_LIMIT + 100) + "hello world";
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("does NOT manufacture a one-char artifact from an all-whitespace scan window before one real char", () => {
+      // Mutation-killer pin (SR-20260706-PR2510-b488133f): the ONE-CHAR half
+      // of the truncation gate. The slice is 8,191 spaces + "X", which trims
+      // to the single char "X" — but the >8 KiB topic is plainly not a
+      // one-char argument. Kills the mutant that moves the
+      // looksLikeExpansionArtifact check back outside the `!truncated` gate.
+      const topic = " ".repeat(CATEGORY_SCAN_LIMIT - 1) + "X" + "y".repeat(50);
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT - 1)).toBe("X");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("does NOT manufacture a one-char artifact when whitespace sits right past the cap either", () => {
+      // Sibling variant: same one-char scan window, but the char past the
+      // cap is whitespace, so the edge is NOT suspect — the truncation gate
+      // alone must suppress the artifact, independent of suspectEdge.
+      const topic = " ".repeat(CATEGORY_SCAN_LIMIT - 1) + "X " + "y".repeat(50);
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT - 1)).toBe("X");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe(" ");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+  });
+
+  /**
+   * Mutation-killer regression pins (#2506) — deliberately GREEN against
+   * the pre-fix source: each fixture discriminates an edge-guard branch of
+   * PR #2504 whose deletion previously left the whole suite green
+   * (Sentinel SR-20260705-PR2504-2870b7cf, mutation-verified).
+   */
+  describe("edge-guard mutation pins (#2506)", () => {
+    it("keeps a genuine $1 survivor when the last in-cap char is whitespace (edge NOT suspect)", () => {
+      // Pins the `!/\s$/.test(bounded)` conjunct of the suspect-edge
+      // classifier: `$1` occupies indices 8188-8189 and spaces fill
+      // 8190-8191, so the cut lands INSIDE whitespace — a real boundary,
+      // not a bisected token, even though a word char follows at 8192.
+      const topic = "a ".repeat(4094) + "$1  " + "x".repeat(100);
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 4, CATEGORY_SCAN_LIMIT)).toBe("$1  ");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe("x");
+      expect(detectShellExpansion(topic, "file")).toBe(true);
+    });
+
+    it("filters a residue bisected right after its unit letter (500KB cut after the K)", () => {
+      // Pins the suspect-edge residue filter in the currency-residue tier:
+      // the slice ends `… budget of 500K` with `B more …` past the cap, so
+      // the apparent bare-`500K` residue owes its trailing `\b` to the cut
+      // (the intact `500KB` is not a residue in the full string).
+      const topic = "a ".repeat(4089) + "budget of 500KB more storage capacity";
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 14, CATEGORY_SCAN_LIMIT)).toBe("budget of 500K");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe("B");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("counts U+2028 line separators as whitespace in the proximity scan", () => {
+      // Pins the isWhitespaceAt non-ASCII fallback: U+2028 survives NFKC
+      // (unlike NBSP/figure space, which fold to a plain space), so only
+      // the `/\s/` fallback can classify it. Four intervening words exceed
+      // the 3-word window → no money context.
+      const sep = "\u2028";
+      const far = `budget${sep}one${sep}two${sep}three${sep}four${sep}80K`;
+      expect(detectShellExpansion(far, "arg")).toBe(false);
+      // …and a single separator inside the window IS proximate.
+      const near = `budget${sep}80K`;
+      expect(detectShellExpansion(near, "arg")).toBe(true);
     });
   });
 
