@@ -499,6 +499,50 @@ describe("council docs review", () => {
 
     expect(stdout).not.toContain("\u001b");
   });
+
+  it("sanitizes untrusted filenames in the review listing (control/ANSI/OSC/CR — T-2474)", async () => {
+    // Filenames are attacker-influenced (they come from disk, potentially a
+    // shared/synced docs folder). A crafted name could smuggle an ANSI
+    // clear-screen, an OSC 8 hyperlink, or a CR line-overwrite into the
+    // terminal. Every filename reaching stdout must be routed through
+    // toSingleLineDisplay so none of these raw sequences survive.
+    const evilFailed = "rep\u001b[2Jort\u0007\rA.pdf"; // CSI + BEL + CR
+    const evilNeedsReview = "img\u001b]8;;http://evil\u0007B.xyz"; // OSC 8 hyperlink
+    const { stdout } = await runDocs(
+      ["review", "finance"],
+      depsFor(
+        {
+          kind: "scanned",
+          result: scanResult({
+            failed: 1,
+            needsReview: 1,
+            files: [
+              fileDetail({
+                filename: evilFailed,
+                status: "failed",
+                errorKind: "corrupt-document",
+                errorMessage: "corrupt",
+              }),
+              fileDetail({
+                filename: evilNeedsReview,
+                status: "needs-review",
+                detectedFormat: "unknown (extension .xyz)",
+              }),
+            ],
+          }),
+        },
+        makeConfig({ aiExtraction: "ask" }),
+      ),
+    );
+
+    // Raw control / ANSI / OSC / CR bytes must NOT reach the terminal.
+    expect(stdout).not.toContain("\u001b"); // no ESC (CSI / OSC introducer)
+    expect(stdout).not.toContain("\u0007"); // no BEL (OSC terminator)
+    expect(stdout).not.toContain("\r"); // no raw CR line-overwrite
+    // The sanitized filename text is still surfaced to the user.
+    expect(stdout).toContain("report");
+    expect(stdout).toContain("A.pdf");
+  });
 });
 
 describe("council docs doctor", () => {
@@ -800,6 +844,54 @@ describe("council docs doctor", () => {
 
     expect(error).toBeUndefined();
     expect(stdout).not.toMatch(/encrypted|password-protected/i);
+  });
+
+  it("sanitizes untrusted filenames in the health summary (control/ANSI/OSC/CR — T-2474)", async () => {
+    // The doctor summary interpolates corrupt / unsupported / encrypted
+    // filenames into its category lines. Each is attacker-influenced and must
+    // be routed through toSingleLineDisplay so a crafted name cannot inject
+    // ANSI / OSC / CR escape sequences into the terminal.
+    const evilCorrupt = "cor\u001b[2Jrupt\rC.xlsx"; // CSI + CR
+    const evilUnsupported = "uns\u001b]8;;http://evil\u0007up.bin"; // OSC 8 hyperlink
+    const evilEncrypted = "enc\u0007ry\u001b[31mpt.pdf"; // BEL + CSI color
+    const { stdout } = await runDocs(
+      ["doctor", "finance"],
+      depsFor({
+        kind: "scanned",
+        result: scanResult({
+          failed: 3,
+          unsupported: 1,
+          files: [
+            fileDetail({
+              filename: evilCorrupt,
+              status: "failed",
+              errorKind: "corrupt-document",
+              errorMessage: "corrupt",
+            }),
+            fileDetail({
+              filename: evilUnsupported,
+              status: "failed",
+              errorKind: "unsupported-format",
+              errorMessage: "no extractor",
+            }),
+            fileDetail({
+              filename: evilEncrypted,
+              status: "failed",
+              errorKind: "encrypted-document",
+              errorMessage: "encrypted",
+            }),
+          ],
+        }),
+      }),
+    );
+
+    // Raw control / ANSI / OSC / CR bytes must NOT reach the terminal.
+    expect(stdout).not.toContain("\u001b"); // no ESC (CSI / OSC introducer)
+    expect(stdout).not.toContain("\u0007"); // no BEL (OSC terminator)
+    expect(stdout).not.toContain("\r"); // no raw CR line-overwrite
+    // The sanitized filename text is still surfaced to the user.
+    expect(stdout).toContain("corrupt");
+    expect(stdout).toContain("C.xlsx");
   });
 });
 
