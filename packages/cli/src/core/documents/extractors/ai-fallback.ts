@@ -284,31 +284,219 @@ function detectKnownSignature(buffer: Buffer): string | null {
     if (ustarMarker === "ustar\0" || ustarMarker === "ustar ") return "Tar archive";
   }
 
-  // SVG detection (#2459 item 1): only classify as SVG when <svg root is actually present.
-  // Search a bounded prefix (after BOM/whitespace/<?xml prolog/comments/DOCTYPE) for <svg.
+  // SVG detection (#2459 item 1): only classify as SVG when an <svg root is
+  // actually present. Skips leading insignificant XML (BOM/whitespace/<?xml
+  // prolog/comments/DOCTYPE) in a single linear pass over a bounded prefix
+  // (MAX_SVG_PREAMBLE_BYTES) — large enough that >2KB padding can no longer push
+  // the root out of range (#2481), yet finite so an untrusted buffer cannot
+  // force an unbounded synchronous scan (#2494 rework).
   const svgResult = detectSvg(buffer);
   if (svgResult !== null) return svgResult;
 
   return null;
 }
 
+/** Byte sequence terminating an XML comment (`-->`). */
+const XML_COMMENT_END = "-->";
+/** Byte sequence terminating an XML processing instruction / prolog (`?>`). */
+const XML_PI_END = "?>";
+
 /**
- * Detect SVG images by searching for an actual <svg root element in a bounded prefix.
- * Fixes #2459 item 1: generic <?xml files without <svg root are NOT misclassified as SVG.
+ * Upper bound on the leading *insignificant* XML (whitespace, comments,
+ * processing instructions, DOCTYPE) scanned before the first significant token.
+ * Generous enough for any legitimate SVG prolog/DOCTYPE, yet finite so an
+ * untrusted buffer cannot force an unbounded synchronous scan of the event loop
+ * (DoS). When the `<svg` root only appears beyond this prefix the content is
+ * treated as non-SVG — 1 MiB is far larger than the 2 KB evasion window from
+ * #2481, so the padding bypass stays closed while the scan cost stays bounded
+ * (#2494 rework).
+ */
+const MAX_SVG_PREAMBLE_BYTES = 1_048_576; // 1 MiB
+
+/** Whether `byte` is XML whitespace (space, tab, LF, CR, FF, VT). */
+function isXmlWhitespace(byte: number | undefined): boolean {
+  return (
+    byte === 0x20 ||
+    byte === 0x09 ||
+    byte === 0x0a ||
+    byte === 0x0d ||
+    byte === 0x0c ||
+    byte === 0x0b
+  );
+}
+
+/**
+ * If the bytes at `i` begin an XML comment (`<!--`) or processing instruction
+ * (`<?`), return the index just past its terminator (`-->` / `?>`); return -1
+ * when that span is unterminated within `[0, len)`; return `i` unchanged when
+ * the bytes are neither (so the caller can apply its own handling). The span
+ * body is skipped OPAQUELY — its inner quotes, brackets, and `>` are not
+ * interpreted — so a comment/PI cannot desync a surrounding scan such as the
+ * DOCTYPE internal subset (#2494 rework). Single forward jump, O(span length),
+ * no backtracking.
+ */
+function skipCommentOrPi(buffer: Buffer, i: number, len: number): number {
+  if (buffer[i] !== 0x3c) return i; // not '<'
+  const next = i + 1 < len ? buffer[i + 1] : -1;
+  if (next === 0x21 && i + 3 < len && buffer[i + 2] === 0x2d && buffer[i + 3] === 0x2d) {
+    const end = buffer.indexOf(XML_COMMENT_END, i + 4); // '<!--' … '-->'
+    return end === -1 ? -1 : end + XML_COMMENT_END.length;
+  }
+  if (next === 0x3f) {
+    const end = buffer.indexOf(XML_PI_END, i + 2); // '<?' … '?>'
+    return end === -1 ? -1 : end + XML_PI_END.length;
+  }
+  return i; // neither a comment nor a PI
+}
+
+/**
+ * Skip a markup declaration (e.g. `<!DOCTYPE ...>`) starting just after the
+ * leading `<!`. Several constructs may embed bytes that would otherwise
+ * terminate the declaration prematurely, so each is recognized and skipped:
+ *   - Comments (`<!-- -->`) and PIs (`<? ?>`) inside the internal subset
+ *     (permitted by XML 1.0 §2.8). These are OPAQUE — their inner `"`, `'`,
+ *     `]`, and `>` bytes are ignored (recognized before any other rule), so a
+ *     `<!-- ] -->` or `<?pi ]?>` cannot spuriously close the subset or end the
+ *     declaration (#2494 — otherwise a following `<svg>` root would evade the
+ *     ALWAYS-block, a fail-open regression).
+ *   - Quoted literals (`"..."` / `'...'`, e.g. PUBLIC/SYSTEM IDs or entity
+ *     values) whose bodies may contain `>`, `[`, or `]` (#2499). A `]` inside a
+ *     literal must not close the internal subset.
+ *   - The optional internal subset (`[ ... ]`), whose body may contain `>`.
+ * A `]` closes the subset only when it is outside any literal, comment, and PI;
+ * a `>` terminates the declaration only when outside the subset (and outside any
+ * literal/comment/PI). Returns the index immediately after the closing `>`, or
+ * -1 when the declaration (or an embedded comment/PI/literal) is unterminated.
+ * Single forward pass — `i` only advances, so O(remaining bytes), no
+ * backtracking.
+ */
+function skipDeclaration(buffer: Buffer, start: number): number {
+  const len = buffer.length;
+  let inSubset = false;
+  let quote = 0; // 0 = outside any literal; otherwise the opening quote byte
+  let i = start;
+  while (i < len) {
+    const c = buffer[i];
+    if (quote !== 0) {
+      if (c === quote) quote = 0; // closing quote ends the literal
+      i += 1;
+      continue;
+    }
+    if (c === 0x3c) {
+      // '<' — an opaque Comment (<!-- -->) or PI (<? ?>) whose inner bytes must
+      // not desync the scan. Recognize it before any quote/bracket/'>' rule.
+      const skipped = skipCommentOrPi(buffer, i, len);
+      if (skipped === -1) return -1; // unterminated comment/PI → bounded, no hang
+      if (skipped !== i) {
+        i = skipped;
+        continue;
+      }
+    }
+    if (c === 0x22 || c === 0x27) {
+      quote = c; // opening '"' or "'"
+    } else if (c === 0x5b) {
+      inSubset = true; // '['
+    } else if (c === 0x5d && inSubset) {
+      inSubset = false; // ']' closes the subset (only outside literal/comment/PI)
+    } else if (c === 0x3e && !inSubset) {
+      return i + 1; // '>' outside the internal subset terminates the declaration
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+/**
+ * Whether the bytes at `i` form an `<svg` root token: `<` `s` `v` `g`
+ * (case-insensitive) followed by whitespace or `>`. Mirrors the historical
+ * `/<svg[\s>]/i` token check. Uses `===` comparisons so it is safe under
+ * `noUncheckedIndexedAccess` (out-of-range reads are `undefined`, never a match).
+ */
+function isSvgRootAt(buffer: Buffer, i: number, len: number): boolean {
+  if (i + 5 > len) return false; // need '<svg' plus a delimiter byte
+  return (
+    buffer[i] === 0x3c && // '<'
+    (buffer[i + 1] === 0x73 || buffer[i + 1] === 0x53) && // 's' / 'S'
+    (buffer[i + 2] === 0x76 || buffer[i + 2] === 0x56) && // 'v' / 'V'
+    (buffer[i + 3] === 0x67 || buffer[i + 3] === 0x47) && // 'g' / 'G'
+    (isXmlWhitespace(buffer[i + 4]) || buffer[i + 4] === 0x3e) // whitespace or '>'
+  );
+}
+
+/**
+ * Detect SVG images by locating an actual `<svg` root element.
  *
- * Returns "SVG image" if <svg root is found, null otherwise.
+ * Fixes #2459 item 1: generic `<?xml` files without an `<svg` root are NOT
+ * misclassified as SVG.
+ *
+ * Fixes #2481: the previous implementation only scanned a fixed 2KB prefix, so
+ * an adversarial file could prepend an arbitrary amount of *insignificant*
+ * leading XML (whitespace, comments, an `<?xml?>` prolog, and/or a DOCTYPE) to
+ * push the `<svg` root past that window and evade the ALWAYS-blocked SVG
+ * signature (#2392). This scan skips leading insignificant XML in a single
+ * linear forward pass — `i` only advances, no backtracking (ReDoS-safe, no XML
+ * parser) — then checks whether the first *significant* token is an `<svg` root.
+ *
+ * #2494 rework: the pass is bounded to the first `MAX_SVG_PREAMBLE_BYTES`, so
+ * total work is O(MAX_SVG_PREAMBLE_BYTES) regardless of `buffer.length` and an
+ * untrusted buffer cannot force an unbounded synchronous scan (event-loop DoS).
+ * Comments/PIs are opaque even inside a DOCTYPE internal subset, so their inner
+ * bytes cannot desync the declaration scan (see `skipDeclaration`).
+ *
+ * Returns "SVG image" if an `<svg` root is found within the bounded prefix,
+ * null otherwise.
  */
 function detectSvg(buffer: Buffer): string | null {
-  // Scan up to first 2KB for <svg (handles BOM/whitespace/prolog/comments/DOCTYPE)
-  const scanLimit = Math.min(buffer.length, 2048);
-  const prefix = buffer.subarray(0, scanLimit).toString("utf8", 0, scanLimit);
+  const len = buffer.length;
+  let i = 0;
 
-  // Look for <svg (case-insensitive, word boundary)
-  if (/<svg[\s>]/i.test(prefix)) {
-    return "SVG image";
+  // Skip a UTF-8 BOM (EF BB BF) if present.
+  if (len >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    i = 3;
   }
 
-  return null;
+  // Bound the preamble scan to a finite prefix so an untrusted buffer cannot
+  // force an unbounded synchronous scan (event-loop DoS). `scan` is a view (no
+  // copy) sharing memory with `buffer`, so indices align and all reads/indexOf
+  // stay within the cap. Padding an `<svg` root past the cap is treated as
+  // non-SVG — 1 MiB ≫ the 2 KB evasion window from #2481.
+  const scanEnd = len < MAX_SVG_PREAMBLE_BYTES ? len : MAX_SVG_PREAMBLE_BYTES;
+  const scan = scanEnd < len ? buffer.subarray(0, scanEnd) : buffer;
+
+  // Skip leading insignificant XML — whitespace, comments (<!-- -->),
+  // processing instructions / the <?xml?> prolog (<? ?>), and declarations
+  // such as <!DOCTYPE ...>. The loop only ever advances `i`, so the whole scan
+  // is a single linear pass with no backtracking.
+  while (i < scanEnd) {
+    const c = scan[i];
+    if (isXmlWhitespace(c)) {
+      i += 1;
+      continue;
+    }
+    if (c !== 0x3c) {
+      break; // first significant byte is not '<' → cannot be an <svg root
+    }
+    // '<!--' comment or '<?' PI → opaque span, skip it (shared with the
+    // internal-subset scan so both stay consistent).
+    const skipped = skipCommentOrPi(scan, i, scanEnd);
+    if (skipped === -1) return null; // unterminated within the bounded prefix
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    // '<!' (non-comment) → a markup declaration such as <!DOCTYPE ...>.
+    if (i + 1 < scanEnd && scan[i + 1] === 0x21) {
+      const end = skipDeclaration(scan, i + 2);
+      if (end === -1) return null; // unterminated within the bounded prefix
+      i = end;
+      continue;
+    }
+    break; // '<' followed by anything else → first significant element
+  }
+
+  // Root check on the full buffer so an `<svg` starting exactly at the cap
+  // boundary is still matched; `i <= scanEnd <= len` and `scan` shares memory.
+  return isSvgRootAt(buffer, i, len) ? "SVG image" : null;
 }
 
 /**
