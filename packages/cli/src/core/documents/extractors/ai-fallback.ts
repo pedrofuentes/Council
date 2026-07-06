@@ -111,7 +111,7 @@ export interface AiFallbackDeps {
  * when `allowedExtensions` is empty (default behavior). When
  * `allowedExtensions` is non-empty, entries override this blocklist
  * for listed extensions — enabling opt-in AI extraction for otherwise-blocked
- * types (e.g., `.png` or `.key` files). The magic-byte SIGNATURE_BLOCKLIST
+ * types (e.g., `.png` or `.gif` files). The magic-byte SIGNATURE_BLOCKLIST
  * (below) applies unconditionally, even to allowlisted extensions.
  *
  * Rationale:
@@ -592,7 +592,7 @@ function shouldCheckExtensionBlocklist(config: AiFallbackConfig): boolean {
  *
  * T-11 (F-09): when a non-empty `allowedExtensions` is configured, entries
  * in that list override the default `BLOCKLIST`. This allows users to opt
- * blocklisted extensions (e.g. .png, .key) into AI-extraction review by
+ * blocklisted extensions (e.g. .png, .gif) into AI-extraction review by
  * listing them explicitly. When NO allowlist is configured (empty array),
  * the blocklist applies unconditionally.
  *
@@ -664,7 +664,7 @@ export async function attemptAiFallback(
 
     // T-11 (F-09): When a non-empty allowlist is configured, check it FIRST.
     // Extensions in the allowlist override the default BLOCKLIST, allowing
-    // users to opt blocklisted extensions (e.g. .png, .key) into
+    // users to opt blocklisted extensions (e.g. .png, .gif) into
     // AI-extraction review. When NO allowlist is configured (empty array),
     // the blocklist applies unconditionally.
     if (!shouldCheckExtensionBlocklist(config)) {
