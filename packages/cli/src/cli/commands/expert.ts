@@ -61,6 +61,15 @@ function formatNotFound(kind: string, slug: string, available: readonly string[]
 }
 
 /**
+ * Coerce an unknown thrown value into a real `Error` so it can be handed to
+ * APIs typed to receive `Error` — e.g. the members of an `AggregateError` —
+ * without the `value as Error` casts the `no any / unknown + guards`
+ * convention forbids (a thrown string would otherwise smuggle through as a
+ * fake `Error` whose `.message` is `undefined`).
+ */
+const toError = (v: unknown): Error => (v instanceof Error ? v : new Error(String(v)));
+
+/**
  * Wrap a trailing hint line in the dim ANSI style, but only when stdout is an
  * interactive TTY. Piped or redirected output (files, CI logs, `| cat`) gets
  * clean, unstyled text instead of raw escape sequences (#809).
@@ -800,12 +809,12 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
         const expert = await library.get(slug);
         if (!expert) {
           const all = (await library.list()).map((e) => e.slug);
-          const msg = formatNotFound("Expert", slug, all);
+          const msg = formatNotFound("Expert", toSingleLineDisplay(slug), all);
           writeError(`${msg}\n`);
           throw new CliUserError(msg);
         }
         if (expert.kind !== "persona") {
-          const msg = `Expert "${slug}" is not a persona expert — only persona experts have indexed documents.`;
+          const msg = `Expert "${toSingleLineDisplay(slug)}" is not a persona expert — only persona experts have indexed documents.`;
           writeError(msg + "\n");
           throw new CliUserError(msg);
         }
@@ -924,7 +933,7 @@ function buildDocsCommand(write: Writer, writeError: Writer): Command {
               writeError(msg + "\n");
               throw new CliUserError(msg, {
                 cause: new AggregateError(
-                  [err as Error, rollbackErr as Error],
+                  [toError(err), toError(rollbackErr)],
                   "excludedDocs update failed and status rollback also failed",
                 ),
               });
@@ -1503,7 +1512,8 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
           try {
             await library.update(slug, { excludedDocs });
           } catch (err: unknown) {
-            const detail = err instanceof Error ? err.message : String(err);
+            const detail = toSingleLineDisplay(err instanceof Error ? err.message : String(err));
+            const safeSlug = toSingleLineDisplay(slug);
             // Word the recovery hint for the input kind actually used to
             // re-add the document(s): a URL source can't be retried with
             // `--file` (#2464).
@@ -1517,9 +1527,9 @@ function buildTrainCommand(write: Writer, writeError: Writer, deps: ExpertComman
                   : "--file <path>";
             const retryNoun = usedFile && usedUrl ? "document(s)" : usedUrl ? "URL(s)" : "file(s)";
             const msg =
-              `Failed to update expert "${slug}" excludedDocs list after re-adding documents: ${detail}\n` +
+              `Failed to update expert "${safeSlug}" excludedDocs list after re-adding documents: ${detail}\n` +
               `The documents were successfully committed, but the exclusion list could not be pruned.\n` +
-              `Recovery: re-run "council expert train ${slug} ${retryInvocation}" for the same ${retryNoun} to retry the excludedDocs update.`;
+              `Recovery: re-run "council expert train ${safeSlug} ${retryInvocation}" for the same ${retryNoun} to retry the excludedDocs update.`;
             writeError(msg + "\n");
             throw new CliUserError(msg);
           }
