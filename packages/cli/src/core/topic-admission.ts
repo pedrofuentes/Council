@@ -82,32 +82,70 @@ export function boundCategoryScanText(topic: string): string {
 }
 
 /**
+ * The bounded, normalized text {@link detectShellExpansion} scans, plus
+ * whether the 8 KiB cap manufactured an artificial trailing word boundary.
+ */
+interface ShellExpansionScan {
+  /** First {@link CATEGORY_SCAN_LIMIT} chars, trimmed and NFKC-normalized. */
+  readonly normalized: string;
+  /** True iff the cap cut a token in half, manufacturing a trailing `\b`. */
+  readonly suspectEdge: boolean;
+}
+
+/**
  * Bound the text handed to {@link detectShellExpansion} to the same
- * {@link CATEGORY_SCAN_LIMIT} prefix as the category scan, but — when the
- * input was actually truncated — first drop the possibly-bisected trailing
- * token.
+ * {@link CATEGORY_SCAN_LIMIT} prefix as the category scan, and report
+ * whether the trailing match boundary at the slice edge is ARTIFICIAL.
  *
  * The cap can slice through an intact currency literal such as `$180K`,
  * leaving the bounded string ending in `…$1`; {@link SHELL_POSITIONAL_PATTERN}
  * would then match that manufactured end-of-string boundary and warn on input
- * that never touched a shell (#2453). Trimming the truncated slice back to the
- * last whitespace removes the partial token.
+ * that never touched a shell (#2453). The original remedy — trimming the
+ * trailing token off the truncated slice — over-corrected (#2482): it
+ * discarded genuine pre-cap survivors buried in one long whitespace-free run
+ * (false negative) and could trim a topic down to a whitespace-only or
+ * one-char string, manufacturing the empty/one-char residue artifacts the
+ * #2453 fix set out to eliminate (false positive).
  *
- * CRITICAL guard: if the truncated slice has NO whitespace at all (a single
- * ≥{@link CATEGORY_SCAN_LIMIT}-char token), keep it intact — trimming it to an
- * empty string would instead trip the `normalized.length === 0` residue signal
- * and manufacture the opposite false positive.
+ * Instead, ALL bounded text is kept and the caller discards only matches
+ * whose trailing word boundary is manufactured by the cut. The edge is
+ * suspect iff the slice cut a token in half: the last bounded char is
+ * non-whitespace AND the first char past the cap is a word char (JS `\b`
+ * semantics: `[A-Za-z0-9_]`, i.e. `/\w/`; `charAt` past the end returns "",
+ * which `/\w/` rejects, so an untruncated input is never suspect). See
+ * {@link hasNonEdgeMatch}.
  *
  * Applies ONLY to {@link detectShellExpansion}; the category scan keeps using
  * the plain {@link boundCategoryScanText} prefix.
  */
-function boundShellExpansionScanText(topic: string): string {
-  if (topic.length <= CATEGORY_SCAN_LIMIT) {
-    return topic;
+function boundShellExpansionScanText(topic: string): ShellExpansionScan {
+  const truncated = topic.length > CATEGORY_SCAN_LIMIT;
+  const bounded = truncated ? topic.slice(0, CATEGORY_SCAN_LIMIT) : topic;
+  const normalized = bounded.trim().normalize("NFKC");
+  const suspectEdge =
+    truncated && !/\s$/.test(bounded) && /\w/.test(topic.charAt(CATEGORY_SCAN_LIMIT));
+  return { normalized, suspectEdge };
+}
+
+/**
+ * Match-existence check honouring the artificial-edge guard: when
+ * `suspectEdge` is false, any match counts; when true, only a match ending
+ * strictly BEFORE the end of `text` counts — a match ending exactly at the
+ * end may owe its trailing `\b` to the 8 KiB cut rather than to the input
+ * (#2482).
+ *
+ * `pattern` MUST carry the `g` flag: `matchAll` requires it (and clones the
+ * regex, so no `lastIndex` state leaks between calls). The iterator is lazy,
+ * so on a clean edge this is as cheap as `.test()` — it stops at the first
+ * match.
+ */
+function hasNonEdgeMatch(pattern: RegExp, text: string, suspectEdge: boolean): boolean {
+  for (const match of text.matchAll(pattern)) {
+    if (!suspectEdge || match.index + match[0].length < text.length) {
+      return true;
+    }
   }
-  const sliced = topic.slice(0, CATEGORY_SCAN_LIMIT);
-  const trimmed = sliced.replace(/\S+$/, "");
-  return trimmed.length === 0 ? sliced : trimmed;
+  return false;
 }
 
 const CATEGORIES: readonly PatternCategory[] = [
@@ -157,8 +195,12 @@ const SHELL_VAR_PATTERN = /\$[A-Za-z_]/;
  * Does NOT match `$10`, `$50`, `$99`, etc., which are more likely to be
  * currency amounts in practice (especially when appearing with context
  * like "Compare $50 vs $45" or "$50/month").
+ *
+ * Ends in `\b`, so a match can end at an end-anchored word boundary that the
+ * 8 KiB cap manufactured — matched via {@link hasNonEdgeMatch} (hence the `g`
+ * flag; never reuse with the stateful `.test()`/`.exec()`).
  */
-const SHELL_POSITIONAL_PATTERN = /\$\d\b/;
+const SHELL_POSITIONAL_PATTERN = /\$\d\b/g;
 
 /**
  * Heuristic for shell-expansion *artifacts*: when `$180K` is passed
@@ -191,8 +233,13 @@ const MULTI_SPACE_RESIDUE_PATTERN = /\S {2,}\S/;
  * This is deliberately ARG-ONLY (see {@link detectShellExpansion}): typed or
  * file-sourced phrases such as "Vitamin K" or "Plan B" are NOT shell-mangled
  * and must never trip this signal.
+ *
+ * Ends in `\b`, so a bisected token (`… Kilometers` cut after the `K`) could
+ * manufacture a lone-unit match at the slice edge — matched via
+ * {@link hasNonEdgeMatch} (hence the `g` flag; never reuse with the stateful
+ * `.test()`/`.exec()`).
  */
-const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/;
+const LONE_UNIT_SUFFIX_PATTERN = /\s[KMBG]\b/g;
 
 /**
  * Bash currency residue (#2379). Bash expands single-digit positional
@@ -255,26 +302,70 @@ const MAX_WORDS_KEYWORD_BEFORE_RESIDUE = 3;
 const MAX_WORDS_KEYWORD_AFTER_RESIDUE = 2;
 
 /**
- * Word-count proximity predicate: `true` iff at most `max` whitespace-
- * separated words fall strictly between two match spans `[from, to)`.
+ * Hard character-distance cap for the proximity gate (#2484): a money
+ * keyword more than this many characters from the residue token is not
+ * "proximate", no matter how few whitespace-separated words span the gap —
+ * a single 200-char token is one "word" but plainly separates the two.
+ * This is simultaneously a semantic tightening AND the cost bound that the
+ * word-count short-circuit alone could not provide: a range made of a few
+ * very LONG unbroken tokens holds at most `max` word starts, so the
+ * pre-#2484 scan walked the full range — O(distance), benchmarked at
+ * ~30-43 ms per call on long-token adversarial shapes, contradicting the
+ * module's "without measurable cost" contract. The cap bounds every
+ * {@link wordsWithin} call at O(128) and makes the cost property
+ * semantically testable (dropping the cap flips a far-keyword fixture's
+ * outcome instead of just its timing).
+ */
+const MAX_PROXIMITY_SCAN_CHARS = 128;
+
+/**
+ * Fallback whitespace test for non-ASCII code points. JS `\s` also covers
+ * Unicode spaces (NBSP, ogham/en/em spaces, line/paragraph separators,
+ * narrow no-break, ideographic space, BOM, …) that the ASCII fast path in
+ * {@link isWhitespaceAt} cannot; behaviour must stay identical to `/\s/`.
+ */
+const NON_ASCII_WHITESPACE_PATTERN = /\s/;
+
+/**
+ * Whitespace test for the char at `index`, charCode-based: the ASCII range
+ * is decided by direct comparison (0x20 space, 0x09-0x0D tab/LF/VT/FF/CR —
+ * exactly the ASCII subset of `\s`); code points above 0x7F fall back to a
+ * single shared regex so Unicode-space behaviour is unchanged. Avoids a
+ * regex invocation per scanned character on the (overwhelmingly ASCII) hot
+ * path (#2484).
+ */
+function isWhitespaceAt(text: string, index: number): boolean {
+  const code = text.charCodeAt(index);
+  if (code <= 0x7f) {
+    return code === 0x20 || (code >= 0x09 && code <= 0x0d);
+  }
+  return NON_ASCII_WHITESPACE_PATTERN.test(text.charAt(index));
+}
+
+/**
+ * Word-count proximity predicate: `true` iff the span `[from, to)` is at
+ * most {@link MAX_PROXIMITY_SCAN_CHARS} characters wide AND at most `max`
+ * whitespace-separated words fall strictly between the two match spans.
  *
- * Behaviourally identical to `slice(from, to).trim().split(/\s+/).length <=
- * max`, but scans character-by-character and short-circuits as soon as the
- * `(max + 1)`-th word start is seen — O(max), never O(distance) (#2454). A
- * word start is a non-whitespace character at the range start or preceded by
- * whitespace; leading/trailing whitespace of the range is ignored, matching
- * the trim/split semantics exactly. Never materializes a slice or array, so a
- * token-dense adversarial arg within the 8 KiB cap stays cheap.
+ * Within the character cap, behaviourally identical to
+ * `slice(from, to).trim().split(/\s+/).length <= max`: it scans
+ * character-by-character and short-circuits as soon as the `(max + 1)`-th
+ * word start is seen (#2454). A word start is a non-whitespace character at
+ * the range start or preceded by whitespace; leading/trailing whitespace of
+ * the range is ignored, matching the trim/split semantics exactly. The char
+ * cap makes the scan O(min(range, 128)) — never O(distance) (#2484). Never
+ * materializes a slice or array, so an adversarial arg within the 8 KiB cap
+ * stays cheap.
  */
 function wordsWithin(text: string, from: number, to: number, max: number): boolean {
+  if (to - from > MAX_PROXIMITY_SCAN_CHARS) {
+    return false;
+  }
   let count = 0;
   let prevWhitespace = true;
-  for (let i = from; i < to; i++) {
-    const ch = text[i];
-    if (ch === undefined) {
-      break;
-    }
-    const isWhitespace = /\s/.test(ch);
+  const end = Math.min(to, text.length);
+  for (let i = from; i < end; i++) {
+    const isWhitespace = isWhitespaceAt(text, i);
     if (!isWhitespace && prevWhitespace) {
       count++;
       if (count > max) {
@@ -286,16 +377,21 @@ function wordsWithin(text: string, from: number, to: number, max: number): boole
   return count <= max;
 }
 
-function looksLikeCurrencyResidue(normalized: string): boolean {
+function looksLikeCurrencyResidue(normalized: string, suspectEdge: boolean): boolean {
   // In index order, courtesy of matchAll.
   const keywords = [...normalized.matchAll(MONEY_CONTEXT_PATTERN)];
   if (keywords.length === 0) {
     return false;
   }
+  // On a suspect edge (#2482), a residue match ending exactly at the end of
+  // the bounded text may owe its trailing `\b` to the 8 KiB cut (an intact
+  // `…$1,500KB` bisected after the `K` reads as bare `500K`), so it is
+  // excluded. Safe on the folded text: the confusable fold is a 1:1 char
+  // replacement, so match indices and lengths are unaffected by it.
   const residues = [
     ...normalized.matchAll(BARE_MAGNITUDE_RESIDUE_PATTERN),
     ...normalized.matchAll(BARE_RATE_RESIDUE_PATTERN),
-  ];
+  ].filter((residue) => !suspectEdge || residue.index + residue[0].length < normalized.length);
   // Per residue, only the NEAREST keyword on each side can matter: a farther
   // keyword spans a superset of the intervening text, so its word count is
   // never smaller. Binary search keeps a token-dense adversarial arg at
@@ -413,17 +509,27 @@ function foldConfusableUnitLetters(text: string): string {
  * are sacrificed — same advisory-layer trade-off as
  * {@link boundCategoryScanText}.
  *
- * The bounding is via {@link boundShellExpansionScanText}, which — when the
- * input is actually truncated — drops the possibly-bisected trailing token
- * first, so the cap slicing through an intact `$180K` cannot leave a phantom
- * `$1` at the slice edge and manufacture a positional-survivor warning on
- * input that never touched a shell (#2453).
+ * The bounding is via {@link boundShellExpansionScanText}, which also reports
+ * whether the cap cut a token in half (last in-cap char non-whitespace AND a
+ * word char immediately past the cap). On such a suspect edge, matches ending
+ * exactly at the slice edge are discarded for the patterns whose match can
+ * end at an end-anchored `\b` — the `$1` positional survivor, the lone unit
+ * suffix, and the bare magnitude/rate residues — so the cap slicing through
+ * an intact `$180K` cannot manufacture a phantom `$1` survivor on input that
+ * never touched a shell (#2453), while genuine pre-cap matches keep warning
+ * even inside one long unbroken run and nothing is ever trimmed into an
+ * empty/one-char residue artifact (#2482). `$VAR` and the multi-space residue
+ * carry no trailing boundary, so bisection cannot manufacture them and they
+ * are matched unguarded.
  */
 export function detectShellExpansion(topic: string, source: TopicSource = "arg"): boolean {
-  const normalized = boundShellExpansionScanText(topic).trim().normalize("NFKC");
+  const { normalized, suspectEdge } = boundShellExpansionScanText(topic);
 
   // Survivor signals — meaningful for every source.
-  if (SHELL_VAR_PATTERN.test(normalized) || SHELL_POSITIONAL_PATTERN.test(normalized)) {
+  if (
+    SHELL_VAR_PATTERN.test(normalized) ||
+    hasNonEdgeMatch(SHELL_POSITIONAL_PATTERN, normalized, suspectEdge)
+  ) {
     return true;
   }
 
@@ -437,8 +543,8 @@ export function detectShellExpansion(topic: string, source: TopicSource = "arg")
     normalized.length === 0 ||
     looksLikeExpansionArtifact(normalized) ||
     MULTI_SPACE_RESIDUE_PATTERN.test(normalized) ||
-    LONE_UNIT_SUFFIX_PATTERN.test(folded) ||
-    looksLikeCurrencyResidue(folded)
+    hasNonEdgeMatch(LONE_UNIT_SUFFIX_PATTERN, folded, suspectEdge) ||
+    looksLikeCurrencyResidue(folded, suspectEdge)
   );
 }
 
