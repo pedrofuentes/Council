@@ -376,6 +376,9 @@ describe("checkTopicAdmission", () => {
       "spend is 50β", // Greek small beta → B
     ])("warns on confusable-letter magnitude residue as a shell arg: %s", (topic) => {
       const result = checkTopicAdmission(topic, "arg");
+      // `admitted` is the TS literal type `true`, so the compiler already
+      // guarantees this invariant; the runtime assertion is kept as living
+      // documentation of the warn-only contract (repo convention, #2485).
       expect(result.admitted).toBe(true);
       const joined = result.warnings.join(" | ");
       expect(joined).toMatch(/shell expansion/i);
@@ -463,7 +466,9 @@ describe("checkTopicAdmission", () => {
       const topic = `budget is 80${letter}`;
       expect(detectShellExpansion(topic, "arg")).toBe(true);
       // Warn-only invariant: even when the residue signal fires, admission
-      // never blocks — its sibling warn blocks pin the same assertion.
+      // never blocks — its sibling warn blocks pin the same assertion. The
+      // TS literal type `admitted: true` already guarantees this at compile
+      // time; the runtime assertion is living documentation (#2485).
       expect(checkTopicAdmission(topic, "arg").admitted).toBe(true);
     });
   });
@@ -491,11 +496,63 @@ describe("checkTopicAdmission", () => {
       // ~26K chars of interleaved keywords and residue tokens where NO pair
       // is inside the proximity window, so nothing can short-circuit; the
       // pre-fix cross-product needed minutes for this shape (59s at 18K
-      // chars). An explicit elapsed-time bound (#2455) is the oracle now — the
-      // correct O(threshold) implementation runs in ~2 ms and a regressed
-      // O(distance) one takes seconds, so 500 ms is CI-safe with wide margin
-      // both ways and no longer leans on the vitest default 5 s timeout.
+      // chars). An explicit elapsed-time bound (#2455) is the oracle now.
+      // NOTE (#2484): this keyword-dense fixture only discriminates the old
+      // R×K cross-product — it always hands wordsWithin short spans, so even
+      // an O(distance) per-span scan finishes in milliseconds here. The
+      // sparse-keyword fixtures in the character-bound describe block below
+      // pin the per-span cost semantically.
       const topic = "usd a b c d 10K e f g h ".repeat(1100);
+      const start = performance.now();
+      const result = detectShellExpansion(topic, "arg");
+      const elapsedMs = performance.now() - start;
+      expect(result).toBe(false);
+      expect(elapsedMs).toBeLessThan(500);
+    });
+  });
+
+  /**
+   * Character bound on the money-context proximity gate (#2484).
+   *
+   * The word-count windows (#2424) alone are not a cost bound: a range made
+   * of a few very LONG unbroken tokens contains at most `max` word starts,
+   * so the per-char scan walks the whole range — O(distance), ~30-43 ms per
+   * call on adversarial 8 KiB shapes. The gate therefore also caps the raw
+   * character distance between a keyword and a residue at 128 chars, which
+   * is simultaneously a semantic tightening (a keyword hundreds of
+   * characters away is not "proximate", however few words span the gap) and
+   * a hard O(128) bound on the scan, making the cost property testable by
+   * outcome instead of wall clock.
+   */
+  describe("proximity-gate character bound (#2484)", () => {
+    it("does NOT treat a keyword ~200 chars away as money context, even with one intervening word", () => {
+      // "usd" and "80K" are separated by a single 200-char token: 1
+      // intervening word (within the ≤3-word window), but far beyond the
+      // 128-char cap. An O(distance) implementation without the character
+      // cap would count the one word and warn — this pins the cap
+      // semantically, not by timing.
+      const topic = "usd " + "y".repeat(200) + " 80K";
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("pins the 128-char cap boundary: identical word count, gap 128 → context, gap 129 → not", () => {
+      // Both shapes have exactly 2 intervening words (≤3-word window is
+      // satisfied); only the character distance between the end of the
+      // keyword match ("budget", ends at index 6) and the start of the
+      // residue ("80K") differs: 128 (at the cap) vs 129 (past it).
+      const under = "budget " + "x".repeat(63) + " " + "x".repeat(62) + " 80K";
+      const over = "budget " + "x".repeat(63) + " " + "x".repeat(63) + " 80K";
+      expect(detectShellExpansion(under, "arg")).toBe(true);
+      expect(detectShellExpansion(over, "arg")).toBe(false);
+    });
+
+    it("handles a sparse-keyword long-token arg without blowing up (adversarial cost shape)", () => {
+      // One early money keyword, several ~1000-char unbroken filler tokens,
+      // then many short bare-magnitude residues: every residue's nearest
+      // keyword is thousands of characters away, so each proximity check
+      // must short-circuit on the character cap instead of walking the
+      // full gap per residue.
+      const topic = "usd " + ("f".repeat(1000) + " ").repeat(6) + "10K ".repeat(400);
       const start = performance.now();
       const result = detectShellExpansion(topic, "arg");
       const elapsedMs = performance.now() - start;
@@ -513,12 +570,17 @@ describe("checkTopicAdmission", () => {
    * survivor pattern would match that manufactured end-of-string boundary — a
    * phantom "shell expansion" warning on input that never touched a shell.
    * Because survivor signals apply to every source, that false positive would
-   * fire for `file`/`interactive` too. The fix drops the possibly-bisected
-   * trailing token from the truncated slice, while never trimming a single
-   * unbroken ≥8 KiB token down to empty (which would trip the opposite,
-   * empty-topic false positive).
+   * fire for `file`/`interactive` too.
+   *
+   * The fix (#2482, replacing the original trailing-token trim) scans the
+   * FULL truncated slice and discards only matches whose trailing word
+   * boundary is manufactured by the cut — i.e. the last in-cap char is
+   * non-whitespace AND the first char past the cap is a word char (`/\w/`,
+   * matching JS `\b` semantics). Genuine pre-cap matches keep warning even
+   * inside one long unbroken run, and nothing is ever trimmed into a phantom
+   * empty/one-char residue artifact.
    */
-  describe("truncation-boundary safety for the 8 KiB cap (#2453)", () => {
+  describe("truncation-boundary safety for the 8 KiB cap (#2453, #2482, #2483)", () => {
     it("does NOT manufacture a $1 survivor when the cap bisects $180K, for any source", () => {
       // Size the filler so the 8,192-char slice ends exactly on `$1`: the `$`
       // lands at index 8190 and `1` at 8191, with `80K …` continuing past the
@@ -549,6 +611,85 @@ describe("checkTopicAdmission", () => {
       const topic = "x".repeat(CATEGORY_SCAN_LIMIT - 2) + "$1";
       expect(topic.length).toBe(CATEGORY_SCAN_LIMIT);
       expect(detectShellExpansion(topic, "arg")).toBe(true);
+    });
+
+    it("still detects an intact $VAR inside a long whitespace-free run reaching the cap (#2482 mech 1)", () => {
+      // The `$VAR` at index 2 is fully inside the scan window, but it belongs
+      // to one long whitespace-free run that reaches the cap. The old
+      // trailing-token trim discarded the entire run — a false negative for
+      // file/interactive (and only accidentally true for arg, via the
+      // leftover "x" tripping the length-1 artifact signal).
+      const topic = "x $VARaaaaaaaaaa" + "a".repeat(20000);
+      for (const source of ["arg", "interactive", "file"] as const) {
+        expect(detectShellExpansion(topic, source)).toBe(true);
+      }
+    });
+
+    it("does NOT manufacture an empty-topic residue from leading whitespace + one long token (#2482 mech 2)", () => {
+      // Old trim: " " + one unbroken >8 KiB token trimmed to " ", normalized
+      // to "" — a phantom empty-topic "shell expansion" warning.
+      expect(detectShellExpansion(" " + "x".repeat(9000), "arg")).toBe(false);
+    });
+
+    it("does NOT manufacture a one-char artifact from a short word + one long token (#2482 mech 2)", () => {
+      // Old trim: "x " + one unbroken token trimmed to "x" — a phantom
+      // length-1 expansion-artifact warning.
+      expect(detectShellExpansion("x " + "a".repeat(20000), "arg")).toBe(false);
+    });
+
+    it("does NOT manufacture a lone-unit-suffix residue when the cap bisects ' Kilometers' (#2482)", () => {
+      // The slice ends `… K` with `ilometers` continuing past the cap: the
+      // apparent lone `K` unit suffix owes its word boundary to the cut.
+      const topic = "a ".repeat((CATEGORY_SCAN_LIMIT - 4) / 2) + "aa Kilometers to the target";
+      expect(topic.slice(CATEGORY_SCAN_LIMIT - 2, CATEGORY_SCAN_LIMIT + 1)).toBe(" Ki");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("pins the truncation flip: one char past the cap is guarded, exactly at the cap is not (#2483)", () => {
+      // Length CATEGORY_SCAN_LIMIT + 1, whitespace throughout the pre-cap
+      // filler: the slice ends `…$1` and the char AT index
+      // CATEGORY_SCAN_LIMIT is the word char `8`, so the trailing word
+      // boundary is manufactured by the cut and the phantom `$1` is ignored.
+      const truncatedTopic = "a ".repeat((CATEGORY_SCAN_LIMIT - 2) / 2) + "$18";
+      expect(truncatedTopic.length).toBe(CATEGORY_SCAN_LIMIT + 1);
+      expect(truncatedTopic.slice(CATEGORY_SCAN_LIMIT - 2, CATEGORY_SCAN_LIMIT)).toBe("$1");
+      for (const source of ["arg", "interactive", "file"] as const) {
+        expect(detectShellExpansion(truncatedTopic, source)).toBe(false);
+      }
+      // The SAME topic minus its final char: length exactly
+      // CATEGORY_SCAN_LIMIT, untruncated, genuinely ends `$1` — a real
+      // survivor that must warn.
+      const exactTopic = truncatedTopic.slice(0, -1);
+      expect(exactTopic.length).toBe(CATEGORY_SCAN_LIMIT);
+      expect(detectShellExpansion(exactTopic, "file")).toBe(true);
+    });
+
+    it("pins the char AT the cap index: word char → artificial edge, non-word char → real boundary (#2483)", () => {
+      // Two topics identical except for the char at index CATEGORY_SCAN_LIMIT
+      // (the first char PAST the slice). Word char: `$18…` was bisected, the
+      // `$1` owes its \b to the cut — ignore. Space: the `$1` genuinely ends
+      // at the cap — a real survivor (the old trailing-token trim wrongly
+      // dropped this one too).
+      const prefix = "a ".repeat((CATEGORY_SCAN_LIMIT - 2) / 2) + "$1";
+      expect(prefix.length).toBe(CATEGORY_SCAN_LIMIT);
+      const wordCharPast = prefix + "8 and more text past the cap";
+      const spacePast = prefix + " and more text past the cap";
+      expect(wordCharPast.charAt(CATEGORY_SCAN_LIMIT)).toBe("8");
+      expect(spacePast.charAt(CATEGORY_SCAN_LIMIT)).toBe(" ");
+      expect(detectShellExpansion(wordCharPast, "file")).toBe(false);
+      expect(detectShellExpansion(spacePast, "file")).toBe(true);
+    });
+
+    it("pins the slice end: a $VAR beginning at the last in-cap char is out of reach (#2483)", () => {
+      // `$` sits at index CATEGORY_SCAN_LIMIT - 1 (the last char inside the
+      // slice) and `V` at CATEGORY_SCAN_LIMIT (the first char outside it), so
+      // the bounded text ends in a lone `$` — no survivor pattern can match.
+      // A slice end of CATEGORY_SCAN_LIMIT + 1 would pull the `V` in and
+      // manufacture a `$V` variable survivor.
+      const topic = "a ".repeat((CATEGORY_SCAN_LIMIT - 2) / 2) + "b$VAR is set";
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT - 1)).toBe("$");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe("V");
+      expect(detectShellExpansion(topic, "file")).toBe(false);
     });
   });
 
