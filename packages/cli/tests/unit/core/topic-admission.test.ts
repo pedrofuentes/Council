@@ -771,6 +771,29 @@ describe("checkTopicAdmission", () => {
       expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
       expect(detectShellExpansion(topic, "arg")).toBe(false);
     });
+
+    it("does NOT manufacture a one-char artifact from an all-whitespace scan window before one real char", () => {
+      // Mutation-killer pin (SR-20260706-PR2510-b488133f): the ONE-CHAR half
+      // of the truncation gate. The slice is 8,191 spaces + "X", which trims
+      // to the single char "X" — but the >8 KiB topic is plainly not a
+      // one-char argument. Kills the mutant that moves the
+      // looksLikeExpansionArtifact check back outside the `!truncated` gate.
+      const topic = " ".repeat(CATEGORY_SCAN_LIMIT - 1) + "X" + "y".repeat(50);
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT - 1)).toBe("X");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
+
+    it("does NOT manufacture a one-char artifact when whitespace sits right past the cap either", () => {
+      // Sibling variant: same one-char scan window, but the char past the
+      // cap is whitespace, so the edge is NOT suspect — the truncation gate
+      // alone must suppress the artifact, independent of suspectEdge.
+      const topic = " ".repeat(CATEGORY_SCAN_LIMIT - 1) + "X " + "y".repeat(50);
+      expect(topic.length).toBeGreaterThan(CATEGORY_SCAN_LIMIT);
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT - 1)).toBe("X");
+      expect(topic.charAt(CATEGORY_SCAN_LIMIT)).toBe(" ");
+      expect(detectShellExpansion(topic, "arg")).toBe(false);
+    });
   });
 
   /**
