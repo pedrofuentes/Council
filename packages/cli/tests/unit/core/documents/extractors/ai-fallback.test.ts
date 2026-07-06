@@ -865,6 +865,82 @@ describe("attemptAiFallback — SVG detection tolerates >2KB leading insignifica
     expect(r2).not.toBeNull();
   });
 
+  // #2494 rework (🔴): XML 1.0 §2.8 permits Comments and PIs inside the DOCTYPE
+  // internal subset. Their inner ']' / '>' / quote bytes must not desync the
+  // subset scan, or a well-formed SVG evades the ALWAYS-block (fail-open vs the
+  // old /<svg[\s>]/i). Each of these is a well-formed SVG that MUST be blocked.
+  it("detects an <svg> root despite a bracket inside a subset comment", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<!-- ] -->]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a bracket inside a subset processing instruction", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<?pi ]?>]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a bracket-gt sequence inside a subset comment", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<!-- a ]> b -->]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a lone double-quote inside a subset comment", async () => {
+    const doc = Buffer.from('<!DOCTYPE svg [<!-- " -->]>\n<svg></svg>');
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a lone single-quote inside a subset PI", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<?p ' ?>]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a comment following an entity decl in the subset", async () => {
+    const doc = Buffer.from('<!DOCTYPE svg [<!ENTITY x "y"> <!-- ] --> ]>\n<svg></svg>');
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("does NOT misclassify a non-SVG root whose DOCTYPE subset contains a comment", async () => {
+    // Same opaque comment/PI subset skip, but the real root is <html> → not SVG.
+    const nonSvg = Buffer.from("<!DOCTYPE html [<!-- ] -->]>\n<html></html>");
+    const result = await attemptAiFallback(makeCtx(nonSvg, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result).not.toBeNull();
+  });
+
+  it("still detects an <svg> root when padding is just under the 1 MiB preamble cap", async () => {
+    // Large-but-bounded leading padding (< MAX_SVG_PREAMBLE_BYTES) is still
+    // scanned, so the >2KB padding evasion from #2481 stays closed.
+    const underCap = Buffer.concat([
+      Buffer.alloc(1024 * 1024 - 64, 0x20), // just under the 1 MiB cap
+      Buffer.from("<svg></svg>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(underCap, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("bounds the preamble scan: an <svg> root beyond the 1 MiB cap is not detected", async () => {
+    // The preamble scan is capped (MAX_SVG_PREAMBLE_BYTES = 1 MiB) so an
+    // untrusted buffer cannot force an unbounded synchronous scan (event-loop
+    // DoS). Padding an <svg> beyond the cap is treated as non-SVG — an accepted
+    // tradeoff since 1 MiB ≫ any real prolog and ≫ the 2 KB window from #2481.
+    const overCap = Buffer.concat([
+      Buffer.alloc(2 * 1024 * 1024, 0x20), // 2 MiB whitespace (> 1 MiB cap)
+      Buffer.from("<svg></svg>"),
+    ]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(overCap, ".svg"), svgConfig);
+    expect(performance.now() - start).toBeLessThan(1000); // bounded — no unbounded scan
+    expect(result).not.toBeNull(); // beyond the cap → not detected as SVG
+  });
+
   it("scales ~linearly with the leading-run size (no catastrophic backtracking)", async () => {
     // A linear single pass grows ~proportionally with input; a quadratic or
     // backtracking scan would explode super-linearly (and, at these sizes, time
@@ -883,8 +959,8 @@ describe("attemptAiFallback — SVG detection tolerates >2KB leading insignifica
       }
       return best;
     };
-    const base = await bestOfMs(1024 * 1024); // 1 MiB leading whitespace
-    const eightX = await bestOfMs(8 * 1024 * 1024); // 8x larger
+    const base = await bestOfMs(128 * 1024); // 128 KiB leading whitespace
+    const eightX = await bestOfMs(1024 * 1024); // 8x larger, at the 1 MiB cap
     // Ideal linear growth is ~8x; allow a very generous 4x slack (32x) plus a
     // small additive floor so sub-millisecond base timings on fast machines do
     // not make the ratio brittle. Quadratic growth (~64x) would exceed this.
