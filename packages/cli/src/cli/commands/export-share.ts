@@ -171,10 +171,9 @@ function renderDecisionFramework(out: ConcludeOutput): readonly string[] {
 
 function renderRecommendationNote(doc: TranscriptDocument): string {
   return (
-    `_Council records the panel's deliberation but does not persist a synthesized ` +
-    `recommendation, so the \`share\` export cannot include one. Run ` +
-    `\`council conclude ${sanitizeExportLine(doc.panel.name)}\` to generate a recommendation — it prints to ` +
-    `stdout for you to copy in here._`
+    `_No recommendation is currently stored for this debate. Run ` +
+    `\`council conclude ${sanitizeExportLine(doc.panel.name)}\` to generate and persist a ` +
+    `recommendation, then re-export with \`--format share\` to include it automatically._`
   );
 }
 
