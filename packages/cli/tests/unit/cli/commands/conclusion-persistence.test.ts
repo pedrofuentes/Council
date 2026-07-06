@@ -228,8 +228,8 @@ describe("conclusion persistence + export surfacing", () => {
     expect(md).toContain("## Transcript"); // still a valid export
 
     const share = await runExport(panelName, "share");
-    // Graceful: the honest apology note remains for panels lacking a conclusion.
-    expect(share).toContain("does not persist a synthesized recommendation");
+    // Graceful: the note explains the persist + re-export workflow.
+    expect(share).toContain("No recommendation is currently stored for this debate");
   });
 
   it("convene auto-conclude persists the framework and export surfaces it", async () => {
