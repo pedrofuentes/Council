@@ -718,6 +718,256 @@ describe("attemptAiFallback — magic-byte blocklist gate (🔴 fix)", () => {
   });
 });
 
+// #2481: SVG detection must not be evadable by padding the <svg> root past a
+// fixed byte window. The scan must skip an ARBITRARY amount of *insignificant*
+// leading XML (whitespace, comments, the <?xml?> prolog, DOCTYPE) and still
+// classify the file as an SVG image — while staying linear/bounded (no ReDoS)
+// on the untrusted-input path and NOT misclassifying non-SVG roots.
+describe("attemptAiFallback — SVG detection tolerates >2KB leading insignificant XML (#2481)", () => {
+  // Comfortably past the historical 2048-byte scan window.
+  const PAD = 2048 + 512;
+
+  const svgConfig: AiFallbackConfig = { mode: "auto", allowedExtensions: [".svg"] };
+
+  it("detects an <svg> root preceded by >2KB of leading whitespace", async () => {
+    const padded = Buffer.concat([
+      Buffer.alloc(PAD, 0x20), // PAD spaces
+      Buffer.from('<svg width="100" height="100"></svg>'),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root preceded by a >2KB XML comment", async () => {
+    const padded = Buffer.concat([
+      Buffer.from("<!-- "),
+      Buffer.alloc(PAD, 0x61), // PAD 'a' bytes inside the comment
+      Buffer.from(" -->\n<svg></svg>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root after a >2KB prolog + comment + doctype run", async () => {
+    const padded = Buffer.concat([
+      Buffer.from('<?xml version="1.0" encoding="UTF-8"?>\n'),
+      Buffer.from("<!--"),
+      Buffer.alloc(PAD, 0x20),
+      Buffer.from("-->\n"),
+      Buffer.from(
+        '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" ' +
+          '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n',
+      ),
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root after a DOCTYPE whose internal subset contains '>' plus >2KB padding", async () => {
+    const padded = Buffer.concat([
+      Buffer.from("<!DOCTYPE svg ["),
+      // '>' characters inside the internal subset must NOT end the DOCTYPE early.
+      Buffer.from('<!ENTITY nbsp "&#160;">'),
+      Buffer.alloc(PAD, 0x20),
+      Buffer.from("]>\n"),
+      Buffer.from("<svg></svg>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root after a DOCTYPE whose internal-subset literal contains ']' (double- and single-quoted)", async () => {
+    // A ']' INSIDE a quoted entity literal must NOT be treated as closing the
+    // internal subset (#2499). Both inputs are well-formed SVGs that MUST be
+    // blocked; a boolean (non-quote-aware) subset scan lets them fail open.
+    const doubleQuoted = Buffer.from('<!DOCTYPE svg [<!ENTITY x "]">]>\n<svg></svg>');
+    const r1 = await attemptAiFallback(makeCtx(doubleQuoted, ".svg"), svgConfig);
+    expect(r1).toBeNull();
+
+    const singleQuoted = Buffer.from("<!DOCTYPE svg [<!ENTITY x ']'>]>\n<svg></svg>");
+    const r2 = await attemptAiFallback(makeCtx(singleQuoted, ".svg"), svgConfig);
+    expect(r2).toBeNull();
+  });
+
+  it("does NOT misclassify a non-SVG root after a DOCTYPE whose subset literal contains ']'", async () => {
+    // Same quote-aware subset skip, but the real root is <html> → not an SVG.
+    const nonSvg = Buffer.from('<!DOCTYPE html [<!ENTITY x "]">]>\n<html></html>');
+    const result = await attemptAiFallback(makeCtx(nonSvg, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result).not.toBeNull();
+  });
+
+  it("does NOT misclassify a non-SVG root after >2KB of leading padding as SVG", async () => {
+    const padded = Buffer.concat([
+      Buffer.alloc(PAD, 0x20),
+      Buffer.from("<html><body><svg></svg></body></html>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(padded, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    // Root element is <html>, not <svg> → must NOT be blocked as an SVG image.
+    expect(result).not.toBeNull();
+  });
+
+  it("returns no-SVG within a bounded time for an unterminated comment (no hang)", async () => {
+    // '<!--' never closed by '-->' → no reachable root. Must return promptly.
+    const padded = Buffer.concat([
+      Buffer.from("<!-- unterminated; mentions <svg> but never closes "),
+      Buffer.alloc(256 * 1024, 0x61),
+    ]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(padded, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(performance.now() - start).toBeLessThan(1000); // bounded — must not hang
+    expect(result).not.toBeNull(); // no <svg> root reachable → not an SVG
+  });
+
+  it("returns no-SVG within a bounded time for an unterminated processing instruction (no hang)", async () => {
+    // '<?' never closed by '?>'.
+    const padded = Buffer.concat([Buffer.from("<?pi "), Buffer.alloc(256 * 1024, 0x20)]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(padded, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(result).not.toBeNull();
+  });
+
+  it("returns no-SVG within a bounded time for an unterminated DOCTYPE internal subset (no hang)", async () => {
+    // '<!DOCTYPE svg [' opened but never closed by ']>'.
+    const padded = Buffer.concat([Buffer.from("<!DOCTYPE svg ["), Buffer.alloc(256 * 1024, 0x20)]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(result).not.toBeNull();
+  });
+
+  it("does NOT treat <svgabc> or <svgz ...> as an <svg> root (word boundary)", async () => {
+    const svgabc = Buffer.from("<svgabc></svgabc>");
+    const r1 = await attemptAiFallback(makeCtx(svgabc, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(r1).not.toBeNull();
+
+    const svgz = Buffer.from('<svgz xmlns="http://example.com/ns"></svgz>');
+    const r2 = await attemptAiFallback(makeCtx(svgz, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(r2).not.toBeNull();
+  });
+
+  // #2494 rework (🔴): XML 1.0 §2.8 permits Comments and PIs inside the DOCTYPE
+  // internal subset. Their inner ']' / '>' / quote bytes must not desync the
+  // subset scan, or a well-formed SVG evades the ALWAYS-block (fail-open vs the
+  // old /<svg[\s>]/i). Each of these is a well-formed SVG that MUST be blocked.
+  it("detects an <svg> root despite a bracket inside a subset comment", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<!-- ] -->]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a bracket inside a subset processing instruction", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<?pi ]?>]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a bracket-gt sequence inside a subset comment", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<!-- a ]> b -->]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a lone double-quote inside a subset comment", async () => {
+    const doc = Buffer.from('<!DOCTYPE svg [<!-- " -->]>\n<svg></svg>');
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a lone single-quote inside a subset PI", async () => {
+    const doc = Buffer.from("<!DOCTYPE svg [<?p ' ?>]>\n<svg></svg>");
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("detects an <svg> root despite a comment following an entity decl in the subset", async () => {
+    const doc = Buffer.from('<!DOCTYPE svg [<!ENTITY x "y"> <!-- ] --> ]>\n<svg></svg>');
+    const result = await attemptAiFallback(makeCtx(doc, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("does NOT misclassify a non-SVG root whose DOCTYPE subset contains a comment", async () => {
+    // Same opaque comment/PI subset skip, but the real root is <html> → not SVG.
+    const nonSvg = Buffer.from("<!DOCTYPE html [<!-- ] -->]>\n<html></html>");
+    const result = await attemptAiFallback(makeCtx(nonSvg, ".txt"), {
+      mode: "auto",
+      allowedExtensions: [".txt"],
+    });
+    expect(result).not.toBeNull();
+  });
+
+  it("still detects an <svg> root when padding is just under the 1 MiB preamble cap", async () => {
+    // Large-but-bounded leading padding (< MAX_SVG_PREAMBLE_BYTES) is still
+    // scanned, so the >2KB padding evasion from #2481 stays closed.
+    const underCap = Buffer.concat([
+      Buffer.alloc(1024 * 1024 - 64, 0x20), // just under the 1 MiB cap
+      Buffer.from("<svg></svg>"),
+    ]);
+    const result = await attemptAiFallback(makeCtx(underCap, ".svg"), svgConfig);
+    expect(result).toBeNull();
+  });
+
+  it("bounds the preamble scan: an <svg> root beyond the 1 MiB cap is not detected", async () => {
+    // The preamble scan is capped (MAX_SVG_PREAMBLE_BYTES = 1 MiB) so an
+    // untrusted buffer cannot force an unbounded synchronous scan (event-loop
+    // DoS). Padding an <svg> beyond the cap is treated as non-SVG — an accepted
+    // tradeoff since 1 MiB ≫ any real prolog and ≫ the 2 KB window from #2481.
+    const overCap = Buffer.concat([
+      Buffer.alloc(2 * 1024 * 1024, 0x20), // 2 MiB whitespace (> 1 MiB cap)
+      Buffer.from("<svg></svg>"),
+    ]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(overCap, ".svg"), svgConfig);
+    expect(performance.now() - start).toBeLessThan(1000); // bounded — no unbounded scan
+    expect(result).not.toBeNull(); // beyond the cap → not detected as SVG
+  });
+
+  it("scales ~linearly with the leading-run size (no catastrophic backtracking)", async () => {
+    // A linear single pass grows ~proportionally with input; a quadratic or
+    // backtracking scan would explode super-linearly (and, at these sizes, time
+    // out long before this assertion). Compare an 8x-larger run against a base
+    // run using best-of-N timings to damp scheduler/GC noise, then assert the
+    // growth stays within a generous multiple of the ideal ~8x.
+    const bestOfMs = async (padBytes: number): Promise<number> => {
+      const padded = Buffer.concat([Buffer.alloc(padBytes, 0x20), Buffer.from("<svg></svg>")]);
+      let best = Infinity;
+      for (let k = 0; k < 5; k += 1) {
+        const start = performance.now();
+        const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+        const elapsedMs = performance.now() - start;
+        expect(result).toBeNull(); // still detected as SVG despite the padding
+        best = Math.min(best, elapsedMs);
+      }
+      return best;
+    };
+    const base = await bestOfMs(128 * 1024); // 128 KiB leading whitespace
+    const eightX = await bestOfMs(1024 * 1024); // 8x larger, at the 1 MiB cap
+    // Ideal linear growth is ~8x; allow a very generous 4x slack (32x) plus a
+    // small additive floor so sub-millisecond base timings on fast machines do
+    // not make the ratio brittle. Quadratic growth (~64x) would exceed this.
+    expect(eightX).toBeLessThan(base * 32 + 50);
+  });
+});
+
 describe("attemptAiFallback — error resilience (#985)", () => {
   // A buffer whose helpers throw mid-extraction (e.g. corrupted Buffer):
   // subarray() raises, simulating a hash/slice failure after the gates pass.
