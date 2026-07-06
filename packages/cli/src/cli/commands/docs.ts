@@ -391,14 +391,16 @@ function buildReviewCommand(write: Writer, writeError: Writer, deps: DocsCommand
         const eligible = isAiExtractionEligible(file, aiMode, allowed);
         const tag = eligible ? "  — AI extraction available" : "";
         const marker = kind === "unsupported-format" ? "✘" : "⚠";
-        write(`  ${marker} ${file.filename} — ${reason}${tag}\n`);
+        write(`  ${marker} ${toSingleLineDisplay(file.filename)} — ${reason}${tag}\n`);
         if (kind === "unsupported-format") suggestFormats = true;
       }
       for (const file of needsReview) {
         const detected =
           file.detectedFormat !== undefined ? sanitizeAiText(file.detectedFormat) : "";
         const suffix = detected.length > 0 ? ` — ${detected}` : "";
-        write(`  ⚠ ${file.filename} — awaiting AI-extraction review${suffix}\n`);
+        write(
+          `  ⚠ ${toSingleLineDisplay(file.filename)} — awaiting AI-extraction review${suffix}\n`,
+        );
       }
       if (needsReview.length > 0) {
         // Make the `ask` contract explicit: these files were flagged, not
@@ -577,19 +579,19 @@ function buildDoctorCommand(write: Writer, writeError: Writer, deps: DocsCommand
         );
       }
       if (corrupt.length > 0) {
-        const names = corrupt.map((f) => f.filename).join(", ");
+        const names = corrupt.map((f) => toSingleLineDisplay(f.filename)).join(", ");
         write(
           `  ✘ ${corrupt.length} ${corrupt.length === 1 ? "file" : "files"} corrupt (${names})\n`,
         );
       }
       if (unsupported.length > 0) {
-        const names = unsupported.map((f) => f.filename).join(", ");
+        const names = unsupported.map((f) => toSingleLineDisplay(f.filename)).join(", ");
         write(
           `  ✘ ${unsupported.length} ${unsupported.length === 1 ? "file" : "files"} unsupported (${names})\n`,
         );
       }
       if (encrypted.length > 0) {
-        const names = encrypted.map((f) => f.filename).join(", ");
+        const names = encrypted.map((f) => toSingleLineDisplay(f.filename)).join(", ");
         write(
           `  🔒 ${encrypted.length} ${encrypted.length === 1 ? "file" : "files"} encrypted/password-protected (${names})\n`,
         );
