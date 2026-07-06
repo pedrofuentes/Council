@@ -444,7 +444,7 @@ describe("council export --format share", () => {
     expect(out).not.toContain('"nextActions"');
   });
 
-  it("gives an honest recommendation pointer, never false 'run conclude to populate' guidance", async () => {
+  it("gives accurate post-#2404 guidance: conclude persists, re-export includes it", async () => {
     const seed = await seedDebatedPanel(testHome);
     const cap = captureExport();
     const cmd = buildExportCommand(cap.deps);
@@ -453,10 +453,10 @@ describe("council export --format share", () => {
 
     const recBlock = out.slice(out.search(/## Recommendation/i), out.indexOf("## Transcript"));
 
-    // Honest, accurate pointer: conclude prints to stdout for the user to copy in.
+    // Post-#2404: conclude PERSISTS the conclusion, re-export includes it automatically.
     expect(recBlock).toContain("council conclude share-debated");
-    expect(recBlock).toMatch(/stdout/i);
-    expect(recBlock).toMatch(/copy/i);
+    expect(recBlock).toMatch(/persist/i);
+    expect(recBlock).toMatch(/re-export|export again/i);
 
     // The old FALSE guidance must be gone: nothing may claim that running
     // conclude will populate / synthesize / derive these export sections.
