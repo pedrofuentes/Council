@@ -284,8 +284,10 @@ function detectKnownSignature(buffer: Buffer): string | null {
     if (ustarMarker === "ustar\0" || ustarMarker === "ustar ") return "Tar archive";
   }
 
-  // SVG detection (#2459 item 1): only classify as SVG when <svg root is actually present.
-  // Search a bounded prefix (after BOM/whitespace/<?xml prolog/comments/DOCTYPE) for <svg.
+  // SVG detection (#2459 item 1): only classify as SVG when an <svg root is
+  // actually present. Skips leading insignificant XML (BOM/whitespace/<?xml
+  // prolog/comments/DOCTYPE) in a single unbounded linear pass — there is no
+  // fixed byte window, so padding cannot push the root out of range (#2481).
   const svgResult = detectSvg(buffer);
   if (svgResult !== null) return svgResult;
 
@@ -311,20 +313,33 @@ function isXmlWhitespace(byte: number | undefined): boolean {
 
 /**
  * Skip a markup declaration (e.g. `<!DOCTYPE ...>`) starting just after the
- * leading `<!`. Accounts for an optional internal subset (`[ ... ]`) whose body
- * may itself contain `>` characters, so those do not terminate the declaration
- * prematurely. Returns the index immediately after the closing `>`, or -1 when
- * the declaration is unterminated. Single forward pass — O(remaining bytes).
+ * leading `<!`. Handles two constructs whose bytes must not prematurely
+ * terminate the declaration:
+ *   - quoted literals (`"..."` / `'...'`, e.g. PUBLIC/SYSTEM IDs or entity
+ *     values) whose bodies may contain `>`, `[`, or `]`; and
+ *   - an optional internal subset (`[ ... ]`) whose body may contain `>`.
+ * A `]` only closes the internal subset when it is NOT inside a quoted literal
+ * (#2499) — otherwise a well-formed `<!ENTITY x "]">` would truncate the scan
+ * and let a following `<svg>` root evade detection (fail-open). Returns the
+ * index immediately after the closing `>`, or -1 when the declaration is
+ * unterminated. Single forward pass — O(remaining bytes), no backtracking.
  */
 function skipDeclaration(buffer: Buffer, start: number): number {
   const len = buffer.length;
   let inSubset = false;
+  let quote = 0; // 0 = outside any literal; otherwise the opening quote byte
   for (let i = start; i < len; i += 1) {
     const c = buffer[i];
-    if (c === 0x5b) {
+    if (quote !== 0) {
+      if (c === quote) quote = 0; // closing quote ends the literal
+      continue;
+    }
+    if (c === 0x22 || c === 0x27) {
+      quote = c; // opening '"' or "'"
+    } else if (c === 0x5b) {
       inSubset = true; // '['
     } else if (c === 0x5d) {
-      inSubset = false; // ']'
+      inSubset = false; // ']' — only reached outside a literal, so it is real
     } else if (c === 0x3e && !inSubset) {
       return i + 1; // '>' outside the internal subset terminates the declaration
     }
