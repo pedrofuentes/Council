@@ -849,6 +849,38 @@ describe("attemptAiFallback — SVG detection tolerates >2KB leading insignifica
     expect(result).not.toBeNull();
   });
 
+  // #2508: the `skipCommentOrPi === -1` guard inside `skipDeclaration`
+  // (ai-fallback.ts) bounds an UNTERMINATED comment/PI *nested in a DOCTYPE
+  // internal subset* — the `=== -1` branch the existing #2494 tests above do
+  // not reach. Without that short-circuit the declaration scan would rewind to
+  // the same unterminated `<!--` / `<?` forever (an infinite loop → event-loop
+  // DoS). When the comment/PI never closes, the DOCTYPE never terminates, so no
+  // `<svg` root is reachable → the file is NOT classified as SVG → the
+  // allowlisted `.svg` extension proceeds to a non-null fallback (identical
+  // contract to the unterminated-subset case above). These two tests are the
+  // only coverage of that `=== -1` branch.
+  it("returns no-SVG within a bounded time for an unterminated comment nested in a DOCTYPE subset (no hang)", async () => {
+    const padded = Buffer.concat([
+      Buffer.from("<!DOCTYPE svg [<!-- never closed "),
+      Buffer.alloc(256 * 1024, 0x20),
+    ]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(performance.now() - start).toBeLessThan(1000); // bounded — must not hang
+    expect(result).not.toBeNull(); // DOCTYPE never closes → no <svg> root → not SVG
+  });
+
+  it("returns no-SVG within a bounded time for an unterminated PI nested in a DOCTYPE subset (no hang)", async () => {
+    const padded = Buffer.concat([
+      Buffer.from("<!DOCTYPE svg [<?pi never closed "),
+      Buffer.alloc(256 * 1024, 0x20),
+    ]);
+    const start = performance.now();
+    const result = await attemptAiFallback(makeCtx(padded, ".svg"), svgConfig);
+    expect(performance.now() - start).toBeLessThan(1000); // bounded — must not hang
+    expect(result).not.toBeNull(); // DOCTYPE never closes → no <svg> root → not SVG
+  });
+
   it("does NOT treat <svgabc> or <svgz ...> as an <svg> root (word boundary)", async () => {
     const svgabc = Buffer.from("<svgabc></svgabc>");
     const r1 = await attemptAiFallback(makeCtx(svgabc, ".txt"), {
