@@ -419,6 +419,12 @@ function looksLikeCurrencyResidue(normalized: string, suspectEdge: boolean): boo
   // is not a money keyword, so the bisected fragment must not count as money
   // context; discarding an edge keyword mirrors full-text `\b` semantics
   // exactly as for residues.
+  //
+  // Same `lastIndex` self-defense as {@link hasNonEdgeMatch} (#2507):
+  // `matchAll` clones the regex but seeds the clone from the original's
+  // current `lastIndex`, so each shared `g` pattern is reset before use
+  // rather than trusting comment discipline at other call sites.
+  MONEY_CONTEXT_PATTERN.lastIndex = 0;
   const keywords = [...normalized.matchAll(MONEY_CONTEXT_PATTERN)].filter(
     (keyword) => !suspectEdge || isNonEdgeMatch(keyword, normalized.length),
   );
@@ -430,6 +436,8 @@ function looksLikeCurrencyResidue(normalized: string, suspectEdge: boolean): boo
   // `…$1,500KB` bisected after the `K` reads as bare `500K`), so it is
   // excluded. Safe on the folded text: the confusable fold is a 1:1 char
   // replacement, so match indices and lengths are unaffected by it.
+  BARE_MAGNITUDE_RESIDUE_PATTERN.lastIndex = 0;
+  BARE_RATE_RESIDUE_PATTERN.lastIndex = 0;
   const residues = [
     ...normalized.matchAll(BARE_MAGNITUDE_RESIDUE_PATTERN),
     ...normalized.matchAll(BARE_RATE_RESIDUE_PATTERN),
