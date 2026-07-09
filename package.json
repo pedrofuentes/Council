@@ -38,7 +38,7 @@
     "fuzz": "pnpm fuzz:build && jazzer .clusterfuzzlite/fuzz_strip_control_chars -- -max_total_time=60"
   },
   "devDependencies": {
-    "@cyclonedx/cyclonedx-npm": "5.0.0",
+    "@cyclonedx/cyclonedx-npm": "6.0.0",
     "@eslint/js": "^10.0.1",
     "@jazzer.js/core": "^4.0.0",
     "@types/node": "^26.1.0",
