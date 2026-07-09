@@ -95,8 +95,8 @@ importers:
         specifier: 1.12.0
         version: 1.12.0
       node-html-parser:
-        specifier: ^8.0.4
-        version: 8.0.4
+        specifier: ^9.0.0
+        version: 9.0.0
       pdfjs-dist:
         specifier: 6.1.200
         version: 6.1.200
@@ -3396,8 +3396,8 @@ packages:
     engines: {node: ^18.17.0 || >=20.5.0}
     hasBin: true
 
-  node-html-parser@8.0.4:
-    resolution: {integrity: sha512-w2YxujN/TqrSIWGVNW/fVgKKfAyQeHMXCvnKZI0owLnfP0tfjdLecUoy9zhOMZGoEFk6eP5qSDyvUarjPl3bwQ==}
+  node-html-parser@9.0.0:
+    resolution: {integrity: sha512-MhdaHPyxnyYu/sf0TpiRvDnTrkum0UKHC7FdbDGIUQNlx3I7xzwXoyV0eMUMv/XU+lkJT1glOUzpDPq7b2p1Ew==}
 
   node-mock-http@1.0.4:
     resolution: {integrity: sha512-8DY+kFsDkNXy1sJglUfuODx1/opAGJGyrTuFqEoN90oRc2Vk0ZbD4K2qmKXBBEhZQzdKHIVfEJpDU8Ak2NJEvQ==}
@@ -8489,7 +8489,7 @@ snapshots:
       - supports-color
     optional: true
 
-  node-html-parser@8.0.4:
+  node-html-parser@9.0.0:
     dependencies:
       css-select: 5.2.2
       entities: 8.0.0
